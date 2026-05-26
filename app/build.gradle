@@ -1,0 +1,16 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.autoopenapp"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.autoopenapp"
+        minSdk 26
+        targetSdk 33
+        versionCode 14
+        versionName "2.3"
+    }
+}
