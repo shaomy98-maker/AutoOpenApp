@@ -20,6 +20,11 @@ final class ScheduleConfig {
     static final String EXTRA_ALARM_TIME = "alarm_time";
     static final String DEFAULT_PACKAGE_NAME = "com.ss.android.lark";
     static final String DEFAULT_ACTIVITY_NAME = ".main.app.MainActivity";
+    private static final int MINIMUM_FIXED_GAP_MINUTES = 8 * 60 + 1;
+    private static final int MORNING_START_MINUTES = 8 * 60 + 30;
+    private static final int MORNING_END_MINUTES = 8 * 60 + 50;
+    private static final int EVENING_START_MINUTES = 18 * 60 + 10;
+    private static final int EVENING_END_MINUTES = 21 * 60 + 30;
 
     final boolean enabled;
     final String packageName;
@@ -70,12 +75,22 @@ final class ScheduleConfig {
     }
 
     ScheduleConfig withGeneratedFixedTimesIfNeeded() {
-        if (!fixedTimes.isEmpty()) {
+        Random random = new Random();
+        ArrayList<String> generated = new ArrayList<>();
+        String morning = firstFixedTimeInRange(fixedTimes, MORNING_START_MINUTES, MORNING_END_MINUTES);
+        if (TextUtils.isEmpty(morning)) {
+            morning = randomMorningTime(random, generated);
+        }
+        generated.add(morning);
+
+        String evening = firstFixedTimeInRange(fixedTimes, EVENING_START_MINUTES, EVENING_END_MINUTES);
+        if (TextUtils.isEmpty(evening) || !hasRequiredFixedGap(morning, evening)) {
+            evening = randomEveningTime(random, generated);
+        }
+        generated.add(evening);
+        if (generated.equals(fixedTimes)) {
             return this;
         }
-        ArrayList<String> generated = new ArrayList<>();
-        generated.add(randomMorningTime(new Random(), new ArrayList<String>()));
-        generated.add(randomEveningTime(new Random(), generated));
         return new ScheduleConfig(enabled, packageName, activityName, deepLink, workdaysOnly, generated, times, datedTimes);
     }
 
@@ -86,9 +101,9 @@ final class ScheduleConfig {
         Random random = new Random();
         ArrayList<String> nextFixedTimes = new ArrayList<>(fixedTimes);
         int index = nextFixedTimes.indexOf(completedTime);
-        if (completedTime.startsWith("08:")) {
+        if (isMorningFixedTime(completedTime)) {
             nextFixedTimes.set(index, randomMorningTime(random, nextFixedTimes));
-        } else if (completedTime.startsWith("18:")) {
+        } else if (isEveningFixedTime(completedTime)) {
             nextFixedTimes.set(index, randomEveningTime(random, nextFixedTimes));
         }
         return new ScheduleConfig(enabled, packageName, activityName, deepLink, workdaysOnly, nextFixedTimes, times, datedTimes);
@@ -222,6 +237,10 @@ final class ScheduleConfig {
         return "仅允许 08:00-09:00、18:00-22:00";
     }
 
+    static String fixedTimeDescription() {
+        return "固定随机：08:30-08:50、18:10-21:30，间隔超过 8 小时";
+    }
+
     private static int minutesOfDay(String value) {
         return Integer.parseInt(value.substring(0, 2)) * 60 + Integer.parseInt(value.substring(3, 5));
     }
@@ -253,21 +272,60 @@ final class ScheduleConfig {
     }
 
     private static String randomMorningTime(Random random, List<String> existing) {
-        return randomTime(random, 8, 30, 59, existing);
+        return randomTime(random, MORNING_START_MINUTES, MORNING_END_MINUTES, existing);
     }
 
     private static String randomEveningTime(Random random, List<String> existing) {
-        return randomTime(random, 18, 10, 59, existing);
+        return randomTime(random, EVENING_START_MINUTES, EVENING_END_MINUTES, existing);
     }
 
-    private static String randomTime(Random random, int hour, int startMinute, int endMinute, List<String> existing) {
-        int range = endMinute - startMinute + 1;
+    private static String randomTime(Random random, int startMinutes, int endMinutes, List<String> existing) {
+        int range = endMinutes - startMinutes + 1;
         for (int i = 0; i < range * 2; i++) {
-            String value = String.format(java.util.Locale.US, "%02d:%02d", hour, startMinute + random.nextInt(range));
+            String value = formatMinutes(startMinutes + random.nextInt(range));
             if (!existing.contains(value)) {
                 return value;
             }
         }
-        return String.format(java.util.Locale.US, "%02d:%02d", hour, startMinute + random.nextInt(range));
+        return formatMinutes(startMinutes + random.nextInt(range));
+    }
+
+    private static String firstFixedTimeInRange(List<String> values, int startMinutes, int endMinutes) {
+        for (String value : values) {
+            if (!isValidTime(value)) {
+                continue;
+            }
+            int minutes = minutesOfDay(value);
+            if (minutes >= startMinutes && minutes <= endMinutes) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static boolean isMorningFixedTime(String value) {
+        if (!isValidTime(value)) {
+            return false;
+        }
+        int minutes = minutesOfDay(value);
+        return minutes >= MORNING_START_MINUTES && minutes <= MORNING_END_MINUTES;
+    }
+
+    private static boolean isEveningFixedTime(String value) {
+        if (!isValidTime(value)) {
+            return false;
+        }
+        int minutes = minutesOfDay(value);
+        return minutes >= EVENING_START_MINUTES && minutes <= EVENING_END_MINUTES;
+    }
+
+    private static boolean hasRequiredFixedGap(String morning, String evening) {
+        return isValidTime(morning)
+                && isValidTime(evening)
+                && minutesOfDay(evening) - minutesOfDay(morning) >= MINIMUM_FIXED_GAP_MINUTES;
+    }
+
+    private static String formatMinutes(int minutes) {
+        return String.format(Locale.US, "%02d:%02d", minutes / 60, minutes % 60);
     }
 }

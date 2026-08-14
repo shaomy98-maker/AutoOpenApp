@@ -78,9 +78,16 @@ final class TargetLauncher {
         for (int i = 0; i < intents.size(); i++) {
             try {
                 context.startActivity(intents.get(i));
-                RunLog.i(context, "目标启动成功，第 " + (i + 1) + " 种方式，package=" + config.packageName);
-                LaunchTracker.markSuccess(context, alarmTime);
-                AlarmScheduler.cancelRetry(context);
+                RunLog.i(context, "目标启动请求已被系统接受，第 " + (i + 1) + " 种方式，package=" + config.packageName);
+                LaunchTracker.markDispatched(context, alarmTime, config.packageName);
+                if (ForegroundAppVerifier.canVerify(context)) {
+                    RunLog.i(context, "等待使用情况权限验证目标确实进入前台，保留补偿重试");
+                } else {
+                    RunLog.i(context, "未开启使用情况访问，按启动请求已接受处理；建议在权限设置中开启前台验证");
+                    LaunchTracker.markSuccess(context, alarmTime);
+                    ScheduleStore.completeAfterSuccessfulLaunch(context, alarmTime);
+                    AlarmScheduler.cancelRetry(context);
+                }
                 return true;
             } catch (Exception e) {
                 RunLog.e(context, "目标启动失败，第 " + (i + 1) + " 种方式，package=" + config.packageName, e);

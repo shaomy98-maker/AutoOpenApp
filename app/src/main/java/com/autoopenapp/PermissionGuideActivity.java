@@ -125,6 +125,14 @@ public class PermissionGuideActivity extends Activity {
         addItem("电池优化白名单", "避免系统休眠杀进程导致闹钟失效", batteryReady, true,
                 () -> launch(PermissionUtil.batteryIntent(this)));
 
+        boolean usageReady = PermissionUtil.hasUsageAccess(this);
+        total++;
+        if (usageReady) {
+            ready++;
+        }
+        addItem("使用情况访问", "验证目标是否真的进入前台，被拦截时自动继续补拉", usageReady, true,
+                () -> launch(PermissionUtil.usageAccessIntent(this)));
+
         if (Build.VERSION.SDK_INT >= 33) {
             boolean notifyReady = PermissionUtil.hasNotifications(this);
             total++;
@@ -145,11 +153,19 @@ public class PermissionGuideActivity extends Activity {
                     () -> launch(PermissionUtil.fullScreenIntent(this)));
         }
 
+        addItem("厂商自启动 / 后台保护", "请手动允许自启动、后台运行并在最近任务中锁定本应用", false, true,
+                () -> launch(PermissionUtil.oemAutoStartIntent(this)), "去确认");
+
         progressView.setText("已完成 " + ready + " / " + total);
+        bannerView.setText("可检测权限已全部开启，请再确认厂商后台保护");
         bannerView.setVisibility(ready == total ? View.VISIBLE : View.GONE);
     }
 
     private void addItem(String name, String why, boolean ready, boolean applicable, Runnable action) {
+        addItem(name, why, ready, applicable, action, "去开启");
+    }
+
+    private void addItem(String name, String why, boolean ready, boolean applicable, Runnable action, String actionLabel) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -188,7 +204,7 @@ public class PermissionGuideActivity extends Activity {
             row.addView(status, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         } else {
             Button open = new Button(this);
-            open.setText("去开启");
+            open.setText(actionLabel);
             open.setAllCaps(false);
             open.setTextColor(0xFFFFFFFF);
             textDp(open, 13);

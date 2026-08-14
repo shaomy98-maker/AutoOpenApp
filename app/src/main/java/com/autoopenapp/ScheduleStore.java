@@ -44,4 +44,17 @@ final class ScheduleStore {
         save(context, updated);
         return true;
     }
+
+    static boolean completeAfterSuccessfulLaunch(Context context, String completedTime) {
+        ScheduleConfig current = load(context);
+        ScheduleConfig updated = current.withoutDatedTime(completedTime)
+                .withRegeneratedFixedTime(completedTime);
+        if (updated.toJson().equals(current.toJson())) {
+            return false;
+        }
+        save(context, updated);
+        RunLog.i(context, "任务确认成功，已更新一次性/固定随机时间 value=" + completedTime);
+        AlarmScheduler.reschedule(context);
+        return true;
+    }
 }

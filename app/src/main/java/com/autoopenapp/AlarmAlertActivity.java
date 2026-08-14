@@ -135,19 +135,8 @@ public class AlarmAlertActivity extends Activity {
         if (config.isRunnable()) {
             RunLog.i(this, "AlarmAlertActivity 开始打开目标");
             boolean launchedTarget = TargetLauncher.launch(this, config, alarmTime);
-            if (launchedTarget) {
-                boolean changed = false;
-                if (ScheduleStore.removeDatedTimeAfterSuccess(this, alarmTime)) {
-                    RunLog.i(this, "指定日期时间已在成功拉起后删除，时间=" + alarmTime);
-                    changed = true;
-                }
-                if (ScheduleStore.regenerateFixedTimeAfterSuccess(this, alarmTime)) {
-                    RunLog.i(this, "默认随机时间已在成功拉起后更新，旧时间=" + alarmTime);
-                    changed = true;
-                }
-                if (changed) {
-                    AlarmScheduler.reschedule(this);
-                }
+            if (launchedTarget && LaunchTracker.recentlySucceeded(this, alarmTime)) {
+                ScheduleStore.completeAfterSuccessfulLaunch(this, alarmTime);
             }
         } else {
             RunLog.i(this, "AlarmAlertActivity 配置无效，取消打开目标");

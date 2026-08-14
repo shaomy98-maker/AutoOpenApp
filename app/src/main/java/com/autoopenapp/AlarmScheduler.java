@@ -25,6 +25,10 @@ final class AlarmScheduler {
             return;
         }
         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) {
+            RunLog.i(context, "未安排闹钟：AlarmManager 不可用");
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
             // setAlarmClock 不需要 SCHEDULE_EXACT_ALARM 权限，仍可准时触发，这里只提示不再中止排程
             RunLog.i(context, "缺少精确闹钟权限，使用 setAlarmClock 继续排程；建议在权限设置中授予以提升可靠性");
@@ -36,8 +40,9 @@ final class AlarmScheduler {
                 RunLog.i(context, "跳过已过期指定日期时间 " + dateTime);
                 continue;
             }
-            scheduleOne(context, alarmManager, dateTime, triggerAt, "已安排指定日期闹钟 ");
-            scheduledCount++;
+            if (scheduleOne(context, alarmManager, dateTime, triggerAt, "已安排指定日期闹钟 ")) {
+                scheduledCount++;
+            }
         }
         for (String time : config.allTimes()) {
             if (!ScheduleConfig.isAllowedTriggerTime(time)) {
@@ -45,8 +50,9 @@ final class AlarmScheduler {
                 continue;
             }
             long triggerAt = nextTriggerMillis(time, config.workdaysOnly);
-            scheduleOne(context, alarmManager, time, triggerAt, "已安排闹钟 ");
-            scheduledCount++;
+            if (scheduleOne(context, alarmManager, time, triggerAt, "已安排闹钟 ")) {
+                scheduledCount++;
+            }
         }
         if (scheduledCount == 0) {
             RunLog.i(context, "未安排闹钟：没有未来指定日期时间，且每日时间都不在允许时间段，" + ScheduleConfig.allowedTimeDescription());
@@ -55,6 +61,9 @@ final class AlarmScheduler {
 
     static void cancelAll(Context context) {
         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) {
+            return;
+        }
         for (int hour = 0; hour < 24; hour++) {
             for (int minute = 0; minute < 60; minute++) {
                 cancelOne(context, alarmManager, String.format(java.util.Locale.US, "%02d:%02d", hour, minute));
@@ -82,11 +91,17 @@ final class AlarmScheduler {
 
     static void cancelValue(Context context, String value) {
         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-        cancelOne(context, alarmManager, value);
+        if (alarmManager != null) {
+            cancelOne(context, alarmManager, value);
+        }
     }
 
     static void scheduleRetry(Context context, String alarmValue, int nextAttempt) {
         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) {
+            RunLog.i(context, "无法安排补偿重试：AlarmManager 不可用");
+            return;
+        }
         Intent intent = new Intent(context, AlarmReceiver.class);
         intent.putExtra(ScheduleConfig.EXTRA_ALARM_TIME, alarmValue);
         intent.putExtra(EXTRA_RETRY, true);
@@ -104,12 +119,16 @@ final class AlarmScheduler {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         long triggerAt = System.currentTimeMillis() + LaunchTracker.RETRY_DELAY_MILLIS;
-        alarmManager.setAlarmClock(new AlarmManager.AlarmClockInfo(triggerAt, showIntent), operation);
-        RunLog.i(context, "已安排补偿重试 attempt=" + nextAttempt + " value=" + alarmValue + " triggerAt=" + triggerAt);
+        if (setWakeupAlarm(context, alarmManager, triggerAt, showIntent, operation, "补偿重试")) {
+            RunLog.i(context, "已安排补偿重试 attempt=" + nextAttempt + " value=" + alarmValue + " triggerAt=" + triggerAt);
+        }
     }
 
     static void cancelRetry(Context context) {
         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (alarmManager == null) {
+            return;
+        }
         Intent intent = new Intent(context, AlarmReceiver.class);
         PendingIntent operation = PendingIntent.getBroadcast(
                 context,
@@ -178,7 +197,7 @@ final class AlarmScheduler {
         return ScheduleConfig.isValidDateTime(alarmTime);
     }
 
-    private static void scheduleOne(Context context, AlarmManager alarmManager, String alarmValue, long triggerAt, String prefix) {
+    private static boolean scheduleOne(Context context, AlarmManager alarmManager, String alarmValue, long triggerAt, String prefix) {
         Intent intent = new Intent(context, AlarmReceiver.class);
         intent.putExtra(ScheduleConfig.EXTRA_ALARM_TIME, alarmValue);
         PendingIntent operation = PendingIntent.getBroadcast(
@@ -193,9 +212,38 @@ final class AlarmScheduler {
                 TargetLauncher.buildAlarmAlertIntent(context, alarmValue),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
-        AlarmManager.AlarmClockInfo info = new AlarmManager.AlarmClockInfo(triggerAt, showIntent);
-        alarmManager.setAlarmClock(info, operation);
+        if (!setWakeupAlarm(context, alarmManager, triggerAt, showIntent, operation, alarmValue)) {
+            return false;
+        }
         RunLog.i(context, prefix + alarmValue + " triggerAt=" + triggerAt);
+        return true;
+    }
+
+    private static boolean setWakeupAlarm(
+            Context context,
+            AlarmManager alarmManager,
+            long triggerAt,
+            PendingIntent showIntent,
+            PendingIntent operation,
+            String label
+    ) {
+        try {
+            AlarmManager.AlarmClockInfo info = new AlarmManager.AlarmClockInfo(triggerAt, showIntent);
+            alarmManager.setAlarmClock(info, operation);
+            return true;
+        } catch (SecurityException exactDenied) {
+            RunLog.e(context, "精确闹钟受限，改用可休眠唤醒调度 label=" + label, exactDenied);
+        } catch (RuntimeException exactFailure) {
+            RunLog.e(context, "精确闹钟安排失败，尝试系统容错调度 label=" + label, exactFailure);
+        }
+        try {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, operation);
+            RunLog.i(context, "已使用系统容错闹钟，可能被系统小幅延后 label=" + label);
+            return true;
+        } catch (RuntimeException fallbackFailure) {
+            RunLog.e(context, "闹钟安排彻底失败 label=" + label, fallbackFailure);
+            return false;
+        }
     }
 
     private static boolean isWorkday(Calendar calendar) {

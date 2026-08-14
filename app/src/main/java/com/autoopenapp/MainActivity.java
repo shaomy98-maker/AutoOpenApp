@@ -57,6 +57,7 @@ public class MainActivity extends android.app.Activity {
         requestRuntimePermissions();
         KeepAliveService.start(this);
         maybePromptCriticalPermissions();
+        ExitInfoReporter.logRecentExits(this);
     }
 
     @Override
@@ -352,6 +353,8 @@ public class MainActivity extends android.app.Activity {
         AlarmScheduler.reschedule(this);
         if (config.enabled) {
             KeepAliveService.start(this);
+        } else {
+            KeepAliveService.stop(this);
         }
         if (showToast) {
             if (!config.isRunnable()) {
@@ -381,8 +384,14 @@ public class MainActivity extends android.app.Activity {
         if (!PermissionUtil.isBatteryUnrestricted(this)) {
             missing.add("电池优化白名单（避免进程被压制）");
         }
+        if (!PermissionUtil.hasNotifications(this)) {
+            missing.add("通知权限（前台服务和锁屏提醒）");
+        }
         if (!PermissionUtil.canFullScreen(this)) {
             missing.add("全屏通知（锁屏自动拉起）");
+        }
+        if (!PermissionUtil.hasUsageAccess(this)) {
+            missing.add("使用情况访问（验证目标真正打开并自动补拉）");
         }
         if (missing.isEmpty()) {
             return;
@@ -871,7 +880,8 @@ public class MainActivity extends android.app.Activity {
             TextView dot = taskDot(isMorning(time) ? "早" : "晚", 0xFFDBEAFE, 0xFF1D4ED8);
             row.addView(dot, new LinearLayout.LayoutParams(dp(48), dp(48)));
             TextView value = new TextView(this);
-            value.setText("默认随机 · 成功后自动换\n" + time);
+            value.setText((isMorning(time) ? "早间随机 08:30-08:50" : "晚间随机 18:10-21:30")
+                    + " · 成功后自动换\n" + time);
             textDp(value, 17);
             value.setTypeface(Typeface.DEFAULT_BOLD);
             value.setTextColor(0xFF2542BD);
