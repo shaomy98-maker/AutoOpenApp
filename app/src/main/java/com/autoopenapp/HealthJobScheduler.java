@@ -16,8 +16,8 @@ final class HealthJobScheduler {
         if (scheduler == null) {
             return;
         }
-        if (!ScheduleStore.load(context).enabled) {
-            scheduler.cancel(JOB_ID);
+        if (!KeepAliveService.isGuardEligible(context)) {
+            cancel(context);
             return;
         }
         if (scheduler.getPendingJob(JOB_ID) != null) {
@@ -32,6 +32,13 @@ final class HealthJobScheduler {
         int result = scheduler.schedule(builder.build());
         if (result != JobScheduler.RESULT_SUCCESS) {
             RunLog.i(context, "系统巡检任务安排失败 result=" + result);
+        }
+    }
+
+    static void cancel(Context context) {
+        JobScheduler scheduler = (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+        if (scheduler != null) {
+            scheduler.cancel(JOB_ID);
         }
     }
 }

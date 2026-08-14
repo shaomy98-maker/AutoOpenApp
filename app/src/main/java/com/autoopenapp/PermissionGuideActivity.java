@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -20,16 +21,30 @@ public class PermissionGuideActivity extends Activity {
     private LinearLayout container;
     private TextView progressView;
     private TextView bannerView;
+    private boolean exactAlarmWasReady;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        TargetLauncher.ensureChannel(this);
+        exactAlarmWasReady = PermissionUtil.isExactAlarmReady(this);
         buildUi();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        boolean exactAlarmReady = PermissionUtil.isExactAlarmReady(this);
+        if (!exactAlarmWasReady && exactAlarmReady) {
+            AlarmScheduler.cancelAllRetries(this);
+            AlarmScheduler.reschedule(this);
+            KeepAliveService.sync(this);
+            RunLog.i(this, "精确闹钟权限已开启，已重新安排任务");
+        } else if (exactAlarmWasReady && !exactAlarmReady) {
+            KeepAliveService.sync(this);
+            RunLog.i(this, "精确闹钟权限已关闭，已停止常驻服务");
+        }
+        exactAlarmWasReady = exactAlarmReady;
         render();
     }
 
@@ -42,6 +57,8 @@ public class PermissionGuideActivity extends Activity {
     private void buildUi() {
         ScrollView scrollView = new ScrollView(this);
         scrollView.setBackgroundColor(0xFFF4F6FA);
+        scrollView.setClipToPadding(false);
+        applySystemBarInsets(scrollView);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(18), dp(20), dp(18), dp(28));
@@ -133,15 +150,21 @@ public class PermissionGuideActivity extends Activity {
         addItem("使用情况访问", "验证目标是否真的进入前台，被拦截时自动继续补拉", usageReady, true,
                 () -> launch(PermissionUtil.usageAccessIntent(this)));
 
-        if (Build.VERSION.SDK_INT >= 33) {
-            boolean notifyReady = PermissionUtil.hasNotifications(this);
-            total++;
-            if (notifyReady) {
-                ready++;
-            }
-            addItem("通知权限", "用于锁屏全屏提醒和兜底通知", notifyReady, true,
-                    () -> requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 33));
+        boolean notificationsReady = PermissionUtil.areAppNotificationsEnabled(this);
+        total++;
+        if (notificationsReady) {
+            ready++;
         }
+        addItem("应用通知", "用于锁屏全屏提醒和失败时的兜底通知", notificationsReady, true,
+                this::openNotificationPermission);
+
+        boolean launchChannelReady = PermissionUtil.isLaunchChannelReady(this);
+        total++;
+        if (launchChannelReady) {
+            ready++;
+        }
+        addItem("定时提醒渠道", "渠道被关闭后，到点提醒和全屏拉起将无法显示", launchChannelReady, true,
+                () -> launch(PermissionUtil.launchChannelSettingsIntent(this)));
 
         if (Build.VERSION.SDK_INT >= 34) {
             boolean fullScreenReady = PermissionUtil.canFullScreen(this);
@@ -233,6 +256,48 @@ public class PermissionGuideActivity extends Activity {
         } catch (Exception e) {
             Toast.makeText(this, "无法打开系统设置，请手动到设置中开启", Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void openNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && !PermissionUtil.hasNotificationPermission(this)) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 33);
+            return;
+        }
+        launch(PermissionUtil.appNotificationSettingsIntent(this));
+    }
+
+    private void applySystemBarInsets(View view) {
+        final int initialLeft = view.getPaddingLeft();
+        final int initialTop = view.getPaddingTop();
+        final int initialRight = view.getPaddingRight();
+        final int initialBottom = view.getPaddingBottom();
+        view.setOnApplyWindowInsetsListener((target, insets) -> {
+            int left;
+            int top;
+            int right;
+            int bottom;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets systemBars = insets.getInsets(WindowInsets.Type.systemBars());
+                left = systemBars.left;
+                top = systemBars.top;
+                right = systemBars.right;
+                bottom = systemBars.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft();
+                top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            target.setPadding(
+                    initialLeft + left,
+                    initialTop + top,
+                    initialRight + right,
+                    initialBottom + bottom
+            );
+            return insets;
+        });
+        view.requestApplyInsets();
     }
 
     private LinearLayout.LayoutParams matchWrap() {

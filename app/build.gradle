@@ -9,8 +9,12 @@ android {
     defaultConfig {
         applicationId "com.autoopenapp"
         minSdk 26
-        targetSdk 33
+        targetSdk 36
         versionCode 16
         versionName "2.5"
     }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
 }

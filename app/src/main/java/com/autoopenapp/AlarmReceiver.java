@@ -11,38 +11,49 @@ public class AlarmReceiver extends BroadcastReceiver {
         boolean isRetry = intent != null && intent.getBooleanExtra(AlarmScheduler.EXTRA_RETRY, false);
         int attempt = intent == null ? 0 : intent.getIntExtra(AlarmScheduler.EXTRA_ATTEMPT, 0);
         String alarmTime = intent == null ? "" : intent.getStringExtra(ScheduleConfig.EXTRA_ALARM_TIME);
+        AlarmScheduler.onAlarmTriggered(context, alarmTime, isRetry);
         RunLog.i(context, "AlarmReceiver 收到" + (isRetry ? "补偿重试" : "闹钟") + "广播 attempt=" + attempt + " value=" + alarmTime);
 
-        PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-        if (powerManager == null) {
-            RunLog.i(context, "闹钟触发但 PowerManager 不可用");
+        if (!ScheduleConfig.isValidTime(alarmTime)
+                && !ScheduleConfig.isValidDateTime(alarmTime)) {
+            RunLog.i(context, "忽略缺少有效任务值的闹钟广播 value=" + alarmTime);
+            if (!isRetry) {
+                AlarmScheduler.reschedule(context);
+            }
             return;
         }
-        PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "AutoOpenApp:alarm"
-        );
-        wakeLock.acquire(30_000L);
-        wakeScreenImmediately(context, powerManager);
+
+        PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        PowerManager.WakeLock wakeLock = null;
+        if (powerManager == null) {
+            RunLog.i(context, "闹钟触发但 PowerManager 不可用，继续执行但无法持有唤醒锁");
+        } else {
+            wakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "AutoOpenApp:alarm"
+            );
+            wakeLock.acquire(30_000L);
+            wakeScreenImmediately(context, powerManager);
+        }
         try {
             if (isRetry && LaunchTracker.recentlySucceeded(context, alarmTime)) {
                 RunLog.i(context, "目标已成功打开，停止补偿重试 value=" + alarmTime);
-                AlarmScheduler.cancelRetry(context);
+                TargetLauncher.confirmObservedSuccess(context, alarmTime);
                 return;
             }
 
             ScheduleConfig config = ScheduleStore.load(context);
             if (!config.isRunnable()) {
                 RunLog.i(context, "闹钟触发但配置无效，enabled=" + config.enabled + ", package=" + config.packageName + ", times=" + config.times);
+                AlarmScheduler.reschedule(context);
+                KeepAliveService.sync(context);
                 return;
             }
 
             if (isRetry && ForegroundAppVerifier.canVerify(context)
                     && LaunchTracker.targetObservedAfterDispatch(context, alarmTime, config.packageName)) {
                 RunLog.i(context, "已确认目标应用进入前台，停止补偿重试 value=" + alarmTime);
-                LaunchTracker.markSuccess(context, alarmTime);
-                ScheduleStore.completeAfterSuccessfulLaunch(context, alarmTime);
-                AlarmScheduler.cancelRetry(context);
+                TargetLauncher.confirmObservedSuccess(context, alarmTime);
                 return;
             }
 
@@ -76,7 +87,7 @@ public class AlarmReceiver extends BroadcastReceiver {
                 RunLog.i(context, "已达最大补偿重试次数，停止补拉 value=" + alarmTime);
             }
         } finally {
-            if (wakeLock.isHeld()) {
+            if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();
             }
         }

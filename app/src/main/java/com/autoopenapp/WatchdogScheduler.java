@@ -35,8 +35,7 @@ final class WatchdogScheduler {
     }
 
     private static void scheduleAt(Context context, long triggerAt, String reason) {
-        ScheduleConfig config = ScheduleStore.load(context);
-        if (!config.enabled) {
+        if (!KeepAliveService.isGuardEligible(context)) {
             cancel(context);
             return;
         }
@@ -54,8 +53,11 @@ final class WatchdogScheduler {
             }
             RunLog.i(context, "已安排" + reason + " triggerElapsed=" + triggerAt);
         } catch (SecurityException e) {
-            manager.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, operation);
-            RunLog.e(context, reason + "精确调度受限，已改用系统容错调度", e);
+            cancel(context);
+            RunLog.e(context, reason + "调度权限已变化，已停止恢复链", e);
+        } catch (RuntimeException e) {
+            cancel(context);
+            RunLog.e(context, reason + "安排失败，已取消本次恢复链", e);
         }
     }
 

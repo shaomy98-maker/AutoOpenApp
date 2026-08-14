@@ -73,10 +73,53 @@ final class PermissionUtil {
     }
 
     static boolean hasNotifications(Context context) {
-        if (Build.VERSION.SDK_INT < 33) {
+        return areAppNotificationsEnabled(context) && isLaunchChannelReady(context);
+    }
+
+    static boolean hasNotificationPermission(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return true;
         }
         return context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    static boolean areAppNotificationsEnabled(Context context) {
+        if (!hasNotificationPermission(context)) {
+            return false;
+        }
+        NotificationManager notificationManager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        return notificationManager != null && notificationManager.areNotificationsEnabled();
+    }
+
+    static boolean isLaunchChannelReady(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return true;
+        }
+        NotificationManager notificationManager =
+                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (notificationManager == null) {
+            return false;
+        }
+        android.app.NotificationChannel channel =
+                notificationManager.getNotificationChannel(TargetLauncher.CHANNEL_ID);
+        return channel != null && channel.getImportance() >= NotificationManager.IMPORTANCE_HIGH;
+    }
+
+    static Intent appNotificationSettingsIntent(Context context) {
+        Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+        intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
+        return intent;
+    }
+
+    static Intent launchChannelSettingsIntent(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return appNotificationSettingsIntent(context);
+        }
+        Intent intent = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS);
+        intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
+        intent.putExtra(Settings.EXTRA_CHANNEL_ID, TargetLauncher.CHANNEL_ID);
+        return intent;
     }
 
     static boolean hasUsageAccess(Context context) {
@@ -131,7 +174,7 @@ final class PermissionUtil {
                     "com.samsung.android.sm.ui.battery.BatteryActivity"
             ));
         }
-        if (intent.getComponent() != null && intent.resolveActivity(context.getPackageManager()) != null) {
+        if (intent.getComponent() != null) {
             return intent;
         }
         return appDetailsIntent(context);
@@ -142,7 +185,7 @@ final class PermissionUtil {
             return true;
         }
         NotificationManager notificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        return notificationManager == null || notificationManager.canUseFullScreenIntent();
+        return notificationManager != null && notificationManager.canUseFullScreenIntent();
     }
 
     static Intent fullScreenIntent(Context context) {

@@ -1,11 +1,9 @@
 package com.autoopenapp;
 
-import android.Manifest;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
 import android.app.TimePickerDialog;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -15,6 +13,7 @@ import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.CompoundButton;
 import android.widget.EditText;
@@ -24,8 +23,10 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.Locale;
 
 public class MainActivity extends android.app.Activity {
@@ -44,6 +45,7 @@ public class MainActivity extends android.app.Activity {
     private TextView lastLogView;
     private boolean loadingConfig;
     private boolean criticalPromptShown;
+    private boolean exactAlarmWasReady;
     private final ArrayList<String> fixedTimes = new ArrayList<>();
     private final ArrayList<String> times = new ArrayList<>();
     private final ArrayList<String> datedTimes = new ArrayList<>();
@@ -54,8 +56,8 @@ public class MainActivity extends android.app.Activity {
         TargetLauncher.ensureChannel(this);
         buildUi();
         loadConfig();
-        requestRuntimePermissions();
-        KeepAliveService.start(this);
+        exactAlarmWasReady = PermissionUtil.isExactAlarmReady(this);
+        KeepAliveService.sync(this);
         maybePromptCriticalPermissions();
         ExitInfoReporter.logRecentExits(this);
     }
@@ -63,12 +65,25 @@ public class MainActivity extends android.app.Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        boolean exactAlarmReady = PermissionUtil.isExactAlarmReady(this);
+        if (!exactAlarmWasReady && exactAlarmReady) {
+            AlarmScheduler.cancelAllRetries(this);
+            AlarmScheduler.reschedule(this);
+            KeepAliveService.sync(this);
+            RunLog.i(this, "精确闹钟权限已开启，已重新安排任务");
+        } else if (exactAlarmWasReady && !exactAlarmReady) {
+            KeepAliveService.sync(this);
+            RunLog.i(this, "精确闹钟权限已关闭，已停止常驻服务");
+        }
+        exactAlarmWasReady = exactAlarmReady;
         updatePermissionHint();
     }
 
     private void buildUi() {
         ScrollView scrollView = new ScrollView(this);
         scrollView.setBackgroundColor(0xFFF4F6FA);
+        scrollView.setClipToPadding(false);
+        applySystemBarInsets(scrollView);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(16), dp(18), dp(16), dp(28));
@@ -349,13 +364,9 @@ public class MainActivity extends android.app.Activity {
         }
         ScheduleConfig config = currentConfig();
         ScheduleStore.save(this, config);
-        AlarmScheduler.cancelRetry(this);
+        AlarmScheduler.cancelAllRetries(this);
         AlarmScheduler.reschedule(this);
-        if (config.enabled) {
-            KeepAliveService.start(this);
-        } else {
-            KeepAliveService.stop(this);
-        }
+        KeepAliveService.sync(this);
         if (showToast) {
             if (!config.isRunnable()) {
                 toast("已保存。启用时需要包名和至少一个时间。");
@@ -385,7 +396,7 @@ public class MainActivity extends android.app.Activity {
             missing.add("电池优化白名单（避免进程被压制）");
         }
         if (!PermissionUtil.hasNotifications(this)) {
-            missing.add("通知权限（前台服务和锁屏提醒）");
+            missing.add("通知与定时提醒渠道（锁屏提醒必需）");
         }
         if (!PermissionUtil.canFullScreen(this)) {
             missing.add("全屏通知（锁屏自动拉起）");
@@ -529,7 +540,7 @@ public class MainActivity extends android.app.Activity {
         LinearLayout panel = dialogPanel();
         panel.addView(dialogIcon("⚙", 0xFFEFF6FF, 0xFF2563EB), new LinearLayout.LayoutParams(dp(62), dp(62)));
         panel.addView(dialogTitle("权限设置"), matchWrapWithTop(14));
-        panel.addView(dialogSubtitle("检查精确闹钟、全屏通知、悬浮窗和电池优化"), matchWrap());
+        panel.addView(dialogSubtitle("检查精确闹钟、通知渠道、全屏通知、悬浮窗和电池优化"), matchWrap());
 
         Switch workdays = new Switch(this);
         workdays.setText("仅周一到周五执行");
@@ -888,8 +899,18 @@ public class MainActivity extends android.app.Activity {
             LinearLayout.LayoutParams valueParams = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
             valueParams.leftMargin = dp(12);
             row.addView(value, valueParams);
-            Button lock = button("锁定", 0xFF2563EB, 0xFFDBEAFE, 0xFFDBEAFE);
-            row.addView(lock, new LinearLayout.LayoutParams(dp(54), dp(40)));
+            TextView randomStatus = new TextView(this);
+            randomStatus.setText("自动换");
+            textDp(randomStatus, 12);
+            randomStatus.setTypeface(Typeface.DEFAULT_BOLD);
+            randomStatus.setTextColor(0xFF2563EB);
+            randomStatus.setGravity(Gravity.CENTER);
+            randomStatus.setPadding(dp(10), dp(7), dp(10), dp(7));
+            randomStatus.setBackground(rounded(0xFFDBEAFE, 0xFFDBEAFE, 18));
+            row.addView(randomStatus, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+            ));
             timesContainer.addView(row, matchWrapWithTop(10));
         }
         for (String time : new ArrayList<>(times)) {
@@ -922,10 +943,13 @@ public class MainActivity extends android.app.Activity {
         if (nextTimeView == null) {
             return;
         }
+        boolean enabled = enableSwitch != null && enableSwitch.isChecked();
         String nextValue = nextDisplayValue();
         String nextMeta = nextMetaText(nextValue);
         nextTimeView.setText(nextValue.isEmpty() ? "--:--" : nextValue);
         nextMetaView.setText(nextMeta);
+        nextTimeView.setAlpha(enabled ? 1.0f : 0.55f);
+        nextMetaView.setAlpha(enabled ? 1.0f : 0.7f);
         String packageName = packageInput == null ? ScheduleConfig.DEFAULT_PACKAGE_NAME : packageInput.getText().toString().trim();
         if (packageName.isEmpty()) {
             packageName = ScheduleConfig.DEFAULT_PACKAGE_NAME;
@@ -943,6 +967,9 @@ public class MainActivity extends android.app.Activity {
     }
 
     private String nextDisplayValue() {
+        if (enableSwitch == null || !enableSwitch.isChecked()) {
+            return "";
+        }
         long now = System.currentTimeMillis();
         String nextDateTime = "";
         long nextDateTimeMillis = Long.MAX_VALUE;
@@ -961,15 +988,23 @@ public class MainActivity extends android.app.Activity {
     }
 
     private String nextMetaText(String nextValue) {
+        if (enableSwitch == null || !enableSwitch.isChecked()) {
+            return "任务已停用";
+        }
         if (nextValue.isEmpty()) {
             return "暂无可执行时间";
         }
         if (nextValue.length() > 5) {
             return "指定日期时间 · 不受每日时间限制";
         }
+        long triggerAt = nextDailyMillis(nextValue);
+        if (triggerAt == Long.MAX_VALUE) {
+            return "暂无可执行时间";
+        }
+        String date = new SimpleDateFormat("MM-dd EEE", Locale.CHINA).format(new Date(triggerAt));
         return (workdaysOnlySwitch != null && workdaysOnlySwitch.isChecked())
-                ? "每日任务 · 仅周一到周五"
-                : "每日任务 · 每天执行";
+                ? "每日任务 · " + date + "（工作日）"
+                : "每日任务 · " + date;
     }
 
     private String nextDailyTime() {
@@ -986,15 +1021,19 @@ public class MainActivity extends android.app.Activity {
         if (values.isEmpty()) {
             return "";
         }
-        Calendar now = Calendar.getInstance();
-        int currentMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
+        String bestValue = "";
+        long bestMillis = Long.MAX_VALUE;
         for (String value : values) {
-            int minutes = Integer.parseInt(value.substring(0, 2)) * 60 + Integer.parseInt(value.substring(3, 5));
-            if (minutes >= currentMinutes) {
-                return value;
+            if (!ScheduleConfig.isAllowedTriggerTime(value)) {
+                continue;
+            }
+            long triggerAt = nextDailyMillis(value);
+            if (triggerAt < bestMillis) {
+                bestMillis = triggerAt;
+                bestValue = value;
             }
         }
-        return values.get(0);
+        return bestValue;
     }
 
     private long nextDailyMillis(String hhmm) {
@@ -1006,20 +1045,55 @@ public class MainActivity extends android.app.Activity {
         calendar.set(Calendar.MINUTE, Integer.parseInt(hhmm.substring(3, 5)));
         calendar.set(Calendar.SECOND, 0);
         calendar.set(Calendar.MILLISECOND, 0);
-        if (calendar.getTimeInMillis() <= System.currentTimeMillis()) {
+        boolean workdaysOnly = workdaysOnlySwitch != null && workdaysOnlySwitch.isChecked();
+        while (calendar.getTimeInMillis() <= System.currentTimeMillis()
+                || (workdaysOnly && isWeekend(calendar))) {
             calendar.add(Calendar.DAY_OF_YEAR, 1);
         }
         return calendar.getTimeInMillis();
     }
 
-    private void requestRuntimePermissions() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 33);
-        }
+    private boolean isWeekend(Calendar calendar) {
+        int dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK);
+        return dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY;
     }
 
     private void updatePermissionHint() {
         refreshLastLog();
+        updateDashboard();
+    }
+
+    private void applySystemBarInsets(View view) {
+        final int initialLeft = view.getPaddingLeft();
+        final int initialTop = view.getPaddingTop();
+        final int initialRight = view.getPaddingRight();
+        final int initialBottom = view.getPaddingBottom();
+        view.setOnApplyWindowInsetsListener((target, insets) -> {
+            int left;
+            int top;
+            int right;
+            int bottom;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets systemBars = insets.getInsets(WindowInsets.Type.systemBars());
+                left = systemBars.left;
+                top = systemBars.top;
+                right = systemBars.right;
+                bottom = systemBars.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft();
+                top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight();
+                bottom = insets.getSystemWindowInsetBottom();
+            }
+            target.setPadding(
+                    initialLeft + left,
+                    initialTop + top,
+                    initialRight + right,
+                    initialBottom + bottom
+            );
+            return insets;
+        });
+        view.requestApplyInsets();
     }
 
     private LinearLayout.LayoutParams matchWrap() {

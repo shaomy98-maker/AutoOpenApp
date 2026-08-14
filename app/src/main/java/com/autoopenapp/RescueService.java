@@ -1,5 +1,6 @@
 package com.autoopenapp;
 
+import android.app.ActivityOptions;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -10,6 +11,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -53,31 +55,51 @@ public class RescueService extends Service {
     };
 
     static void start(Context context) {
+        Context appContext = context.getApplicationContext();
+        if (!KeepAliveService.isGuardEligible(appContext)) {
+            stop(appContext);
+            return;
+        }
         try {
-            context.startForegroundService(new Intent(context, RescueService.class));
+            appContext.startForegroundService(new Intent(appContext, RescueService.class));
         } catch (Exception e) {
-            RunLog.e(context, "独立守护进程启动失败", e);
+            RunLog.e(appContext, "独立守护进程启动失败", e);
         }
     }
 
     static void stop(Context context) {
-        Intent intent = new Intent(context, RescueService.class).setAction(ACTION_STOP_GUARD);
+        Context appContext = context.getApplicationContext();
+        Intent intent = new Intent(appContext, RescueService.class).setAction(ACTION_STOP_GUARD);
         try {
-            context.startService(intent);
+            appContext.startService(intent);
         } catch (Exception e) {
-            context.stopService(intent);
-            RunLog.e(context, "独立守护停止指令发送失败，已直接停止", e);
+            try {
+                appContext.stopService(intent);
+            } catch (Exception stopError) {
+                RunLog.e(appContext, "直接停止独立守护进程失败", stopError);
+            }
+            RunLog.e(appContext, "独立守护停止指令发送失败，已直接停止", e);
         }
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannel();
-        startForeground(NOTIFICATION_ID, buildNotification());
-        RunLog.i(this, "独立守护进程已创建 process=" + android.os.Process.myPid());
-        KeepAliveService.start(this);
-        bindMainProcess();
+        if (!KeepAliveService.isGuardEligible(this)) {
+            destroying = true;
+            stopSelf();
+            return;
+        }
+        try {
+            createChannel();
+            startForeground(NOTIFICATION_ID, buildNotification());
+            RunLog.i(this, "独立守护进程已创建 process=" + android.os.Process.myPid());
+            KeepAliveService.sync(this);
+            bindMainProcess();
+        } catch (Exception e) {
+            RunLog.e(this, "创建独立守护进程失败", e);
+            stopGuardNow();
+        }
     }
 
     @Override
@@ -86,15 +108,27 @@ public class RescueService extends Service {
             stopGuardNow();
             return START_NOT_STICKY;
         }
-        startForeground(NOTIFICATION_ID, buildNotification());
-        bindMainProcess();
+        if (destroying || !KeepAliveService.isGuardEligible(this)) {
+            stopGuardNow();
+            return START_NOT_STICKY;
+        }
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification());
+            bindMainProcess();
+        } catch (Exception e) {
+            RunLog.e(this, "更新独立守护通知失败", e);
+            stopGuardNow();
+            return START_NOT_STICKY;
+        }
         return START_STICKY;
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        RunLog.i(this, "守护进程检测到最近任务被划走，安排快速恢复检查");
-        WatchdogScheduler.scheduleQuickRecovery(this);
+        if (KeepAliveService.isGuardEligible(this)) {
+            RunLog.i(this, "守护进程检测到最近任务被划走，安排快速恢复检查");
+            WatchdogScheduler.scheduleQuickRecovery(this);
+        }
         super.onTaskRemoved(rootIntent);
     }
 
@@ -112,7 +146,7 @@ public class RescueService extends Service {
     }
 
     private void bindMainProcess() {
-        if (mainBindingRegistered || destroying) {
+        if (mainBindingRegistered || destroying || !KeepAliveService.isGuardEligible(this)) {
             return;
         }
         try {
@@ -128,13 +162,13 @@ public class RescueService extends Service {
     }
 
     private void recoverMainProcess(String reason) {
-        if (destroying) {
+        if (destroying || !KeepAliveService.isGuardEligible(this)) {
             return;
         }
         RunLog.i(this, reason + "，将在 1.5 秒后恢复主进程");
         handler.postDelayed(() -> {
-            if (!destroying) {
-                KeepAliveService.start(this);
+            if (!destroying && KeepAliveService.isGuardEligible(this)) {
+                KeepAliveService.sync(this);
                 bindMainProcess();
             }
         }, RESTART_DELAY_MILLIS);
@@ -164,7 +198,8 @@ public class RescueService extends Service {
                 this,
                 3,
                 new Intent(this, MainActivity.class),
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE,
+                pendingIntentCreatorOptions()
         );
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_alarm)
@@ -177,6 +212,10 @@ public class RescueService extends Service {
     }
 
     private void createChannel() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) {
+            throw new IllegalStateException("NotificationManager unavailable");
+        }
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
                 "后台守护",
@@ -186,6 +225,23 @@ public class RescueService extends Service {
         channel.setSound(null, null);
         channel.enableVibration(false);
         channel.setShowBadge(false);
-        getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        manager.createNotificationChannel(channel);
+    }
+
+    private android.os.Bundle pendingIntentCreatorOptions() {
+        if (Build.VERSION.SDK_INT < 34) {
+            return null;
+        }
+        ActivityOptions options = ActivityOptions.makeBasic();
+        if (Build.VERSION.SDK_INT >= 36) {
+            options.setPendingIntentCreatorBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+            );
+        } else {
+            options.setPendingIntentCreatorBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            );
+        }
+        return options.toBundle();
     }
 }

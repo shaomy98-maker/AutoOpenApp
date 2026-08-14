@@ -1,5 +1,6 @@
 package com.autoopenapp;
 
+import android.app.ActivityOptions;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -59,72 +60,171 @@ public class KeepAliveService extends Service {
     };
 
     static void start(Context context) {
-        Intent intent = new Intent(context, KeepAliveService.class);
+        sync(context);
+    }
+
+    static void sync(Context context) {
+        Context appContext = context.getApplicationContext();
+        if (!isGuardEligible(appContext)) {
+            stop(appContext);
+            return;
+        }
+
+        Intent intent = new Intent(appContext, KeepAliveService.class);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent);
+                appContext.startForegroundService(intent);
             } else {
-                context.startService(intent);
+                appContext.startService(intent);
             }
         } catch (Exception e) {
-            RunLog.e(context, "常驻前台服务启动失败", e);
+            RunLog.e(appContext, "启动保活服务失败", e);
         }
     }
 
     static void stop(Context context) {
-        deliverStop(context, new Intent(context, KeepAliveService.class).setAction(ACTION_STOP_GUARD));
-        RescueService.stop(context);
-        WatchdogScheduler.cancel(context);
-        HealthJobScheduler.schedule(context);
+        Context appContext = context.getApplicationContext();
+        deliverStop(appContext, new Intent(appContext, KeepAliveService.class).setAction(ACTION_STOP_GUARD));
+        stopRescueSafely(appContext);
+        cancelWatchdogSafely(appContext);
+        cancelHealthJobSafely(appContext);
+    }
+
+    static boolean isGuardEligible(Context context) {
+        try {
+            return ScheduleStore.load(context).isRunnable()
+                    && PermissionUtil.isExactAlarmReady(context);
+        } catch (Exception e) {
+            RunLog.e(context, "检查后台守护运行条件失败", e);
+            return false;
+        }
+    }
+
+    private static void cancelWatchdogSafely(Context context) {
+        try {
+            WatchdogScheduler.cancel(context);
+        } catch (Exception e) {
+            RunLog.e(context, "取消后台巡检失败", e);
+        }
+    }
+
+    private static void cancelHealthJobSafely(Context context) {
+        try {
+            HealthJobScheduler.cancel(context);
+        } catch (Exception e) {
+            RunLog.e(context, "取消健康任务失败", e);
+        }
     }
 
     private static void deliverStop(Context context, Intent intent) {
         try {
             context.startService(intent);
         } catch (Exception e) {
-            context.stopService(intent);
+            try {
+                context.stopService(intent);
+            } catch (Exception stopError) {
+                RunLog.e(context, "直接停止常驻服务失败", stopError);
+            }
             RunLog.e(context, "常驻服务停止指令发送失败，已直接停止", e);
+        }
+    }
+
+    private static void stopRescueSafely(Context context) {
+        try {
+            RescueService.stop(context);
+        } catch (Exception e) {
+            RunLog.e(context, "停止独立守护进程失败", e);
         }
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannel();
-        startForeground(NOTIFICATION_ID, buildNotification());
-        RunLog.i(this, "常驻前台服务已创建");
-        if (ScheduleStore.load(this).enabled) {
-            RescueService.start(this);
-            bindRescueProcess();
+        try {
+            createChannel();
+            startForeground(NOTIFICATION_ID, buildNotification());
+            RunLog.i(this, "常驻前台服务已创建");
+            if (shouldGuard()) {
+                RescueService.start(this);
+                bindRescueProcess();
+            } else {
+                destroying = true;
+                stopRescueSafely(this);
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
+            }
+        } catch (Exception e) {
+            RunLog.e(this, "创建保活前台服务失败", e);
+            destroying = true;
+            stopRescueSafely(this);
+            stopSelf();
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if ((intent != null && ACTION_STOP_GUARD.equals(intent.getAction()))
-                || !ScheduleStore.load(this).enabled) {
+        if (destroying) {
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
+        if (intent != null && ACTION_STOP_GUARD.equals(intent.getAction())) {
             stopGuardNow();
             return START_NOT_STICKY;
         }
-        AlarmScheduler.reschedule(this);
-        WatchdogScheduler.schedule(this);
-        HealthJobScheduler.schedule(this);
-        RescueService.start(this);
-        bindRescueProcess();
-        startForeground(NOTIFICATION_ID, buildNotification());
+        ScheduleConfig config;
+        try {
+            config = ScheduleStore.load(this);
+        } catch (Exception e) {
+            RunLog.e(this, "保活服务读取配置失败", e);
+            stopRescueSafely(this);
+            cancelWatchdogSafely(this);
+            stopGuardNow();
+            return START_NOT_STICKY;
+        }
+        if (!config.isRunnable() || !PermissionUtil.isExactAlarmReady(this)) {
+            RunLog.i(this, "配置不可运行或精确闹钟未授权，已停止保活服务");
+            stopRescueSafely(this);
+            cancelWatchdogSafely(this);
+            cancelHealthJobSafely(this);
+            stopGuardNow();
+            return START_NOT_STICKY;
+        }
+        try {
+            AlarmScheduler.reschedule(this);
+        } catch (Exception e) {
+            RunLog.e(this, "保活服务重新安排闹钟失败", e);
+        }
+        try {
+            WatchdogScheduler.schedule(this);
+            HealthJobScheduler.schedule(this);
+            RescueService.start(this);
+            bindRescueProcess();
+        } catch (Exception e) {
+            RunLog.e(this, "启动进程恢复守护失败", e);
+        }
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification());
+        } catch (Exception e) {
+            RunLog.e(this, "更新保活通知失败", e);
+            stopRescueSafely(this);
+            stopGuardNow();
+            return START_NOT_STICKY;
+        }
         return START_STICKY;
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        RunLog.i(this, "最近任务被划走，已安排快速恢复常驻服务");
-        WatchdogScheduler.scheduleQuickRecovery(this);
+        if (shouldGuard()) {
+            RunLog.i(this, "最近任务被划走，已安排快速恢复常驻服务");
+            WatchdogScheduler.scheduleQuickRecovery(this);
+        }
         super.onTaskRemoved(rootIntent);
     }
 
     @Override
     public void onTrimMemory(int level) {
-        if (level >= TRIM_MEMORY_COMPLETE) {
+        if (level >= TRIM_MEMORY_COMPLETE && shouldGuard()) {
             RunLog.i(this, "系统内存回收压力较高，已安排进程恢复巡检 level=" + level);
             WatchdogScheduler.scheduleQuickRecovery(this);
         }
@@ -133,10 +233,11 @@ public class KeepAliveService extends Service {
 
     @Override
     public void onDestroy() {
+        boolean intentionalStop = destroying;
         destroying = true;
         handler.removeCallbacksAndMessages(null);
         clearRescueBinding();
-        if (ScheduleStore.load(this).enabled) {
+        if (!intentionalStop && shouldGuard()) {
             RunLog.i(this, "常驻服务被销毁，已安排快速恢复");
             WatchdogScheduler.scheduleQuickRecovery(this);
         }
@@ -149,7 +250,7 @@ public class KeepAliveService extends Service {
     }
 
     private void bindRescueProcess() {
-        if (rescueBindingRegistered || destroying || !ScheduleStore.load(this).enabled) {
+        if (rescueBindingRegistered || destroying || !shouldGuard()) {
             return;
         }
         try {
@@ -165,12 +266,12 @@ public class KeepAliveService extends Service {
     }
 
     private void recoverRescueProcess(String reason) {
-        if (destroying || !ScheduleStore.load(this).enabled) {
+        if (destroying || !shouldGuard()) {
             return;
         }
         RunLog.i(this, reason + "，将在 1.5 秒后恢复");
         handler.postDelayed(() -> {
-            if (!destroying && ScheduleStore.load(this).enabled) {
+            if (!destroying && shouldGuard()) {
                 RescueService.start(this);
                 bindRescueProcess();
             }
@@ -202,13 +303,16 @@ public class KeepAliveService extends Service {
                 this,
                 1,
                 intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE,
+                pendingIntentCreatorOptions()
         );
         ScheduleConfig config = ScheduleStore.load(this);
         long next = AlarmScheduler.nextTriggerMillis(this);
         String title;
         if (!config.isRunnable()) {
             title = "定时未启用";
+        } else if (!PermissionUtil.isExactAlarmReady(this)) {
+            title = "需开启精确闹钟";
         } else if (next > 0) {
             title = "下次 " + new SimpleDateFormat("MM-dd HH:mm", Locale.US).format(new Date(next));
         } else {
@@ -229,6 +333,9 @@ public class KeepAliveService extends Service {
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager == null) {
+                throw new IllegalStateException("NotificationManager unavailable");
+            }
             for (String legacy : LEGACY_CHANNEL_IDS) {
                 manager.deleteNotificationChannel(legacy);
             }
@@ -243,5 +350,26 @@ public class KeepAliveService extends Service {
             channel.setShowBadge(false);
             manager.createNotificationChannel(channel);
         }
+    }
+
+    private boolean shouldGuard() {
+        return isGuardEligible(this);
+    }
+
+    private android.os.Bundle pendingIntentCreatorOptions() {
+        if (Build.VERSION.SDK_INT < 34) {
+            return null;
+        }
+        ActivityOptions options = ActivityOptions.makeBasic();
+        if (Build.VERSION.SDK_INT >= 36) {
+            options.setPendingIntentCreatorBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+            );
+        } else {
+            options.setPendingIntentCreatorBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            );
+        }
+        return options.toBundle();
     }
 }

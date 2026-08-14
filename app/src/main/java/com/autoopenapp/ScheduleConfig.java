@@ -52,8 +52,7 @@ final class ScheduleConfig {
         this.deepLink = clean(deepLink);
         this.workdaysOnly = workdaysOnly;
         this.fixedTimes = cleanTimes(fixedTimes);
-        this.times = new ArrayList<>(times);
-        Collections.sort(this.times);
+        this.times = cleanTimes(times);
         this.datedTimes = cleanDateTimes(datedTimes);
     }
 
@@ -251,6 +250,9 @@ final class ScheduleConfig {
 
     private static ArrayList<String> cleanTimes(List<String> values) {
         ArrayList<String> cleanValues = new ArrayList<>();
+        if (values == null) {
+            return cleanValues;
+        }
         for (String value : values) {
             if (isValidTime(value) && !cleanValues.contains(value)) {
                 cleanValues.add(value);
@@ -262,6 +264,9 @@ final class ScheduleConfig {
 
     private static ArrayList<String> cleanDateTimes(List<String> values) {
         ArrayList<String> cleanValues = new ArrayList<>();
+        if (values == null) {
+            return cleanValues;
+        }
         for (String value : values) {
             if (isValidDateTime(value) && !cleanValues.contains(value)) {
                 cleanValues.add(value);
