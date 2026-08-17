@@ -1,7 +1,5 @@
 package com.autoopenapp;
 
-import android.text.TextUtils;
-
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -20,11 +18,11 @@ final class ScheduleConfig {
     static final String EXTRA_ALARM_TIME = "alarm_time";
     static final String DEFAULT_PACKAGE_NAME = "com.ss.android.lark";
     static final String DEFAULT_ACTIVITY_NAME = ".main.app.MainActivity";
-    private static final int MINIMUM_FIXED_GAP_MINUTES = 8 * 60 + 1;
+    private static final int MINIMUM_FIXED_GAP_MINUTES = 9 * 60 + 30;
     private static final int MORNING_START_MINUTES = 8 * 60 + 30;
     private static final int MORNING_END_MINUTES = 8 * 60 + 50;
-    private static final int EVENING_START_MINUTES = 18 * 60 + 10;
-    private static final int EVENING_END_MINUTES = 21 * 60 + 30;
+    private static final int EVENING_START_MINUTES = 21 * 60 + 30;
+    private static final int EVENING_END_MINUTES = 22 * 60;
 
     final boolean enabled;
     final String packageName;
@@ -47,8 +45,8 @@ final class ScheduleConfig {
         this.enabled = enabled;
         String cleanPackage = clean(packageName);
         String cleanActivity = clean(activityName);
-        this.packageName = TextUtils.isEmpty(cleanPackage) ? DEFAULT_PACKAGE_NAME : cleanPackage;
-        this.activityName = TextUtils.isEmpty(cleanActivity) ? DEFAULT_ACTIVITY_NAME : cleanActivity;
+        this.packageName = isEmpty(cleanPackage) ? DEFAULT_PACKAGE_NAME : cleanPackage;
+        this.activityName = isEmpty(cleanActivity) ? DEFAULT_ACTIVITY_NAME : cleanActivity;
         this.deepLink = clean(deepLink);
         this.workdaysOnly = workdaysOnly;
         this.fixedTimes = cleanTimes(fixedTimes);
@@ -61,7 +59,7 @@ final class ScheduleConfig {
     }
 
     boolean isRunnable() {
-        return enabled && !TextUtils.isEmpty(packageName) && (!allTimes().isEmpty() || !datedTimes.isEmpty());
+        return enabled && !isEmpty(packageName) && (!allTimes().isEmpty() || !datedTimes.isEmpty());
     }
 
     ArrayList<String> allTimes() {
@@ -75,18 +73,16 @@ final class ScheduleConfig {
 
     ScheduleConfig withGeneratedFixedTimesIfNeeded() {
         Random random = new Random();
-        ArrayList<String> generated = new ArrayList<>();
         String morning = firstFixedTimeInRange(fixedTimes, MORNING_START_MINUTES, MORNING_END_MINUTES);
-        if (TextUtils.isEmpty(morning)) {
-            morning = randomMorningTime(random, generated);
+        if (isEmpty(morning)) {
+            morning = randomMorningTime(random, Collections.<String>emptyList());
         }
-        generated.add(morning);
 
         String evening = firstFixedTimeInRange(fixedTimes, EVENING_START_MINUTES, EVENING_END_MINUTES);
-        if (TextUtils.isEmpty(evening) || !hasRequiredFixedGap(morning, evening)) {
-            evening = randomEveningTime(random, generated);
+        if (isEmpty(evening) || !hasRequiredFixedGap(morning, evening)) {
+            evening = randomEveningTime(random, morning, Collections.singletonList(morning));
         }
-        generated.add(evening);
+        ArrayList<String> generated = fixedPair(morning, evening);
         if (generated.equals(fixedTimes)) {
             return this;
         }
@@ -94,18 +90,25 @@ final class ScheduleConfig {
     }
 
     ScheduleConfig withRegeneratedFixedTime(String completedTime) {
-        if (TextUtils.isEmpty(completedTime) || !fixedTimes.contains(completedTime)) {
+        if (isEmpty(completedTime) || !fixedTimes.contains(completedTime)) {
             return this;
         }
         Random random = new Random();
-        ArrayList<String> nextFixedTimes = new ArrayList<>(fixedTimes);
-        int index = nextFixedTimes.indexOf(completedTime);
         if (isMorningFixedTime(completedTime)) {
-            nextFixedTimes.set(index, randomMorningTime(random, nextFixedTimes));
+            return this;
         } else if (isEveningFixedTime(completedTime)) {
-            nextFixedTimes.set(index, randomEveningTime(random, nextFixedTimes));
+            return new ScheduleConfig(
+                    enabled,
+                    packageName,
+                    activityName,
+                    deepLink,
+                    workdaysOnly,
+                    randomFixedPair(random),
+                    times,
+                    datedTimes
+            );
         }
-        return new ScheduleConfig(enabled, packageName, activityName, deepLink, workdaysOnly, nextFixedTimes, times, datedTimes);
+        return this;
     }
 
     ScheduleConfig withoutDatedTime(String completedTime) {
@@ -146,7 +149,7 @@ final class ScheduleConfig {
     }
 
     static ScheduleConfig fromJson(String json) {
-        if (TextUtils.isEmpty(json)) {
+        if (isEmpty(json)) {
             return empty();
         }
         try {
@@ -237,7 +240,7 @@ final class ScheduleConfig {
     }
 
     static String fixedTimeDescription() {
-        return "固定随机：08:30-08:50、18:10-21:30，间隔超过 8 小时";
+        return "固定随机：08:30-08:50、21:30-22:00，下班不早于上班后 9 小时 30 分";
     }
 
     private static int minutesOfDay(String value) {
@@ -246,6 +249,10 @@ final class ScheduleConfig {
 
     private static String clean(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static boolean isEmpty(String value) {
+        return value == null || value.length() == 0;
     }
 
     private static ArrayList<String> cleanTimes(List<String> values) {
@@ -280,8 +287,22 @@ final class ScheduleConfig {
         return randomTime(random, MORNING_START_MINUTES, MORNING_END_MINUTES, existing);
     }
 
-    private static String randomEveningTime(Random random, List<String> existing) {
-        return randomTime(random, EVENING_START_MINUTES, EVENING_END_MINUTES, existing);
+    private static String randomEveningTime(Random random, String morning, List<String> existing) {
+        int startMinutes = Math.max(EVENING_START_MINUTES, minutesOfDay(morning) + MINIMUM_FIXED_GAP_MINUTES);
+        return randomTime(random, startMinutes, EVENING_END_MINUTES, existing);
+    }
+
+    private static ArrayList<String> randomFixedPair(Random random) {
+        String morning = randomMorningTime(random, Collections.<String>emptyList());
+        String evening = randomEveningTime(random, morning, Collections.singletonList(morning));
+        return fixedPair(morning, evening);
+    }
+
+    private static ArrayList<String> fixedPair(String morning, String evening) {
+        ArrayList<String> pair = new ArrayList<>();
+        pair.add(morning);
+        pair.add(evening);
+        return pair;
     }
 
     private static String randomTime(Random random, int startMinutes, int endMinutes, List<String> existing) {

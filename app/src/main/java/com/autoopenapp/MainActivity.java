@@ -891,8 +891,8 @@ public class MainActivity extends android.app.Activity {
             TextView dot = taskDot(isMorning(time) ? "早" : "晚", 0xFFDBEAFE, 0xFF1D4ED8);
             row.addView(dot, new LinearLayout.LayoutParams(dp(48), dp(48)));
             TextView value = new TextView(this);
-            value.setText((isMorning(time) ? "早间随机 08:30-08:50" : "晚间随机 18:10-21:30")
-                    + " · 成功后自动换\n" + time);
+            value.setText((isMorning(time) ? "早间随机 08:30-08:50" : "晚间随机 21:30-22:00")
+                    + " · 下班完成后换下一组\n" + time);
             textDp(value, 17);
             value.setTypeface(Typeface.DEFAULT_BOLD);
             value.setTextColor(0xFF2542BD);
@@ -900,7 +900,7 @@ public class MainActivity extends android.app.Activity {
             valueParams.leftMargin = dp(12);
             row.addView(value, valueParams);
             TextView randomStatus = new TextView(this);
-            randomStatus.setText("自动换");
+            randomStatus.setText("配对");
             textDp(randomStatus, 12);
             randomStatus.setTypeface(Typeface.DEFAULT_BOLD);
             randomStatus.setTextColor(0xFF2563EB);

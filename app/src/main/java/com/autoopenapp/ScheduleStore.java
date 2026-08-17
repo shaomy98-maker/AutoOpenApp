@@ -82,7 +82,8 @@ final class ScheduleStore {
     /**
      * Completes all configuration side effects in one atomic, idempotent in-process update.
      * A second success for the same old value sees neither the dated entry nor the old fixed
-     * value and therefore makes no further random-time change.
+     * evening value and therefore makes no further pair change. Morning fixed success keeps
+     * today's evening fixed time in place.
      */
     static synchronized boolean completeAfterSuccess(Context context, String completedTime) {
         ScheduleConfig current = load(context);
@@ -94,7 +95,7 @@ final class ScheduleStore {
             return false;
         }
         save(context, updated);
-        RunLog.i(context, "任务确认成功，已更新一次性/固定随机时间 value=" + completedTime);
+        RunLog.i(context, "任务确认成功，已完成一次性/固定随机配对收尾 value=" + completedTime);
         return true;
     }
 
