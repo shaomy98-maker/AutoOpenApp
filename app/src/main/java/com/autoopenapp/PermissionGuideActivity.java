@@ -248,7 +248,9 @@ public class PermissionGuideActivity extends Activity {
             try {
                 startActivity(intent);
                 return;
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                RunLog.e(this, "打开权限设置失败 action=" + intent.getAction()
+                        + " data=" + intent.getDataString(), e);
             }
         }
         try {

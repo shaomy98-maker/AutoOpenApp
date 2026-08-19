@@ -93,7 +93,73 @@ public class ScheduleConfigTest {
         String time = updated.datedTimes.get(0).substring(11);
         assertTrue(minutesOfDay(time) >= minutesOfDay("18:13"));
         assertTrue(minutesOfDay(time) < minutesOfDay("21:30"));
-        assertTrue(minutesOfDay(time) <= minutesOfDay("22:00"));
+        assertTrue(minutesOfDay(time) <= minutesOfDay("21:29"));
+    }
+
+    @Test
+    public void completedMorning_neverCreatesNormalWednesdayDatedEveningAtOrAfterNineThirty() {
+        ScheduleConfig config = new ScheduleConfig(
+                true,
+                ScheduleConfig.DEFAULT_PACKAGE_NAME,
+                ScheduleConfig.DEFAULT_ACTIVITY_NAME,
+                "",
+                true,
+                Collections.singletonList("08:43"),
+                Collections.<String>emptyList()
+        );
+
+        ScheduleConfig updated = config.withRegeneratedFixedTime(
+                "08:43",
+                calendar(2026, Calendar.AUGUST, 19, 9, 0),
+                maxRandom()
+        );
+
+        String time = updated.datedTimes.get(0).substring(11);
+        assertEquals("21:29", time);
+    }
+
+    @Test
+    public void completedMorning_keepsExistingValidTodayEveningStable() {
+        ScheduleConfig config = new ScheduleConfig(
+                true,
+                ScheduleConfig.DEFAULT_PACKAGE_NAME,
+                ScheduleConfig.DEFAULT_ACTIVITY_NAME,
+                "",
+                true,
+                Collections.singletonList("08:43"),
+                Collections.<String>emptyList(),
+                Collections.singletonList("2026-08-19 18:30")
+        );
+
+        ScheduleConfig updated = config.withRegeneratedFixedTime(
+                "08:43",
+                calendar(2026, Calendar.AUGUST, 19, 9, 0),
+                maxRandom()
+        );
+
+        assertEquals(Collections.singletonList("2026-08-19 18:30"), updated.datedTimes);
+    }
+
+    @Test
+    public void completedMorning_replacesExistingInvalidNormalWednesdayEvening() {
+        ScheduleConfig config = new ScheduleConfig(
+                true,
+                ScheduleConfig.DEFAULT_PACKAGE_NAME,
+                ScheduleConfig.DEFAULT_ACTIVITY_NAME,
+                "",
+                true,
+                Collections.singletonList("08:43"),
+                Collections.<String>emptyList(),
+                Collections.singletonList("2026-08-19 21:41")
+        );
+
+        ScheduleConfig updated = config.withRegeneratedFixedTime(
+                "08:43",
+                calendar(2026, Calendar.AUGUST, 19, 9, 0),
+                maxRandom()
+        );
+
+        assertEquals(Collections.singletonList("2026-08-19 21:29"), updated.datedTimes);
     }
 
     @Test
@@ -154,5 +220,14 @@ public class ScheduleConfigTest {
         calendar.set(year, month, day, hour, minute, 0);
         calendar.set(Calendar.MILLISECOND, 0);
         return calendar;
+    }
+
+    private static Random maxRandom() {
+        return new Random() {
+            @Override
+            public int nextInt(int bound) {
+                return bound - 1;
+            }
+        };
     }
 }

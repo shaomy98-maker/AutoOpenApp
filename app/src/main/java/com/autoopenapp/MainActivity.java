@@ -35,7 +35,7 @@ public class MainActivity extends android.app.Activity {
     private EditText deepLinkInput;
     private EditText dateTimeInput;
     private EditText timeInput;
-    private Switch enableSwitch;
+    private TextView enableButton;
     private Switch workdaysOnlySwitch;
     private LinearLayout timesContainer;
     private TextView nextTimeView;
@@ -46,6 +46,7 @@ public class MainActivity extends android.app.Activity {
     private boolean loadingConfig;
     private boolean criticalPromptShown;
     private boolean exactAlarmWasReady;
+    private boolean scheduleEnabled;
     private final ArrayList<String> fixedTimes = new ArrayList<>();
     private final ArrayList<String> times = new ArrayList<>();
     private final ArrayList<String> datedTimes = new ArrayList<>();
@@ -116,17 +117,22 @@ public class MainActivity extends android.app.Activity {
         titleBox.addView(subtitle, matchWrap());
         header.addView(titleBox, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
-        enableSwitch = new Switch(this);
-        enableSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
-            @Override
-            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                if (loadingConfig) {
-                    return;
-                }
-                saveAndSchedule(false);
+        enableButton = new TextView(this);
+        enableButton.setGravity(Gravity.CENTER);
+        enableButton.setTypeface(Typeface.DEFAULT_BOLD);
+        textDp(enableButton, 13);
+        enableButton.setPadding(dp(16), 0, dp(16), 0);
+        enableButton.setOnClickListener(v -> {
+            if (loadingConfig) {
+                return;
             }
+            scheduleEnabled = !scheduleEnabled;
+            updateEnableButton();
+            updateDashboard();
+            saveAndSchedule(false);
         });
-        header.addView(enableSwitch, new LinearLayout.LayoutParams(dp(62), dp(44)));
+        updateEnableButton();
+        header.addView(enableButton, new LinearLayout.LayoutParams(dp(86), dp(40)));
         root.addView(header, matchWrap());
 
         addDashboardCard(root);
@@ -337,7 +343,8 @@ public class MainActivity extends android.app.Activity {
             times.addAll(config.times);
             datedTimes.clear();
             datedTimes.addAll(config.datedTimes);
-            enableSwitch.setChecked(config.enabled);
+            scheduleEnabled = config.enabled;
+            updateEnableButton();
             workdaysOnlySwitch.setChecked(config.workdaysOnly);
             renderTimes();
         } finally {
@@ -347,7 +354,7 @@ public class MainActivity extends android.app.Activity {
 
     private ScheduleConfig currentConfig() {
         return new ScheduleConfig(
-                enableSwitch.isChecked(),
+                scheduleEnabled,
                 packageInput.getText().toString(),
                 activityInput.getText().toString(),
                 deepLinkInput.getText().toString(),
@@ -892,7 +899,7 @@ public class MainActivity extends android.app.Activity {
             row.addView(dot, new LinearLayout.LayoutParams(dp(48), dp(48)));
             TextView value = new TextView(this);
             value.setText("早间自动 08:30-08:50\n"
-                    + time + " · 下班按当天生成：一二四 21:30 后，三五按 9.5 小时后");
+                    + time + " · 下班按当天生成：一二四 21:30 后，三五最晚 21:29");
             textDp(value, 17);
             value.setTypeface(Typeface.DEFAULT_BOLD);
             value.setTextColor(0xFF2542BD);
@@ -943,7 +950,7 @@ public class MainActivity extends android.app.Activity {
         if (nextTimeView == null) {
             return;
         }
-        boolean enabled = enableSwitch != null && enableSwitch.isChecked();
+        boolean enabled = scheduleEnabled;
         String nextValue = nextDisplayValue();
         String nextMeta = nextMetaText(nextValue);
         nextTimeView.setText(nextValue.isEmpty() ? "--:--" : nextValue);
@@ -967,7 +974,7 @@ public class MainActivity extends android.app.Activity {
     }
 
     private String nextDisplayValue() {
-        if (enableSwitch == null || !enableSwitch.isChecked()) {
+        if (!scheduleEnabled) {
             return "";
         }
         long now = System.currentTimeMillis();
@@ -988,7 +995,7 @@ public class MainActivity extends android.app.Activity {
     }
 
     private String nextMetaText(String nextValue) {
-        if (enableSwitch == null || !enableSwitch.isChecked()) {
+        if (!scheduleEnabled) {
             return "任务已停用";
         }
         if (nextValue.isEmpty()) {
@@ -1061,6 +1068,19 @@ public class MainActivity extends android.app.Activity {
     private void updatePermissionHint() {
         refreshLastLog();
         updateDashboard();
+    }
+
+    private void updateEnableButton() {
+        if (enableButton == null) {
+            return;
+        }
+        enableButton.setText(scheduleEnabled ? "已开启" : "已关闭");
+        enableButton.setTextColor(scheduleEnabled ? 0xFFFFFFFF : 0xFF475467);
+        enableButton.setBackground(rounded(
+                scheduleEnabled ? 0xFF16A34A : 0xFFE5E7EB,
+                scheduleEnabled ? 0xFF16A34A : 0xFFD0D5DD,
+                22
+        ));
     }
 
     private void applySystemBarInsets(View view) {

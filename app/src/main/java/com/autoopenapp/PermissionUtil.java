@@ -136,10 +136,9 @@ final class PermissionUtil {
     }
 
     static Intent usageAccessIntent(Context context) {
-        Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS, packageUri(context));
-        if (intent.resolveActivity(context.getPackageManager()) != null) {
-            return intent;
-        }
+        // Some vendor Settings apps, including the current CP05 build, do not resolve
+        // ACTION_USAGE_ACCESS_SETTINGS when a package: data Uri is attached. The plain action
+        // opens the usage-access list reliably; the user then enables AutoOpenApp there.
         return new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
     }
 

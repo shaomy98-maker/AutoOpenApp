@@ -25,6 +25,7 @@ final class ScheduleConfig {
     private static final int MORNING_END_MINUTES = 8 * 60 + 50;
     private static final int EVENING_ALLOWED_START_MINUTES = 18 * 60;
     private static final int EVENING_OVERTIME_START_MINUTES = 21 * 60 + 30;
+    private static final int EVENING_NORMAL_END_MINUTES = 21 * 60 + 29;
     private static final int EVENING_END_MINUTES = 22 * 60;
 
     final boolean enabled;
@@ -120,6 +121,21 @@ final class ScheduleConfig {
             return this;
         }
         String datePrefix = formatDate(now);
+        String existing = existingValidTodayEvening(completedMorning, now, datePrefix);
+        if (!isEmpty(existing)) {
+            ArrayList<String> stableDatedTimes = new ArrayList<>();
+            for (String dateTime : datedTimes) {
+                if (!dateTime.startsWith(datePrefix + " ")) {
+                    stableDatedTimes.add(dateTime);
+                }
+            }
+            stableDatedTimes.add(existing);
+            Collections.sort(stableDatedTimes);
+            if (stableDatedTimes.equals(datedTimes)) {
+                return this;
+            }
+            return new ScheduleConfig(enabled, packageName, activityName, deepLink, workdaysOnly, fixedTimes, times, stableDatedTimes);
+        }
         ArrayList<String> nextDatedTimes = new ArrayList<>();
         for (String dateTime : datedTimes) {
             if (!dateTime.startsWith(datePrefix + " ")) {
@@ -263,7 +279,7 @@ final class ScheduleConfig {
     }
 
     static String fixedTimeDescription() {
-        return "固定随机：早上 08:30-08:50；下班按当天生成，一二四 21:30-22:00，三五不早于上班后 9 小时 30 分";
+        return "固定随机：早上 08:30-08:50；下班按当天生成，一二四 21:30-22:00，三五 18:00-21:29 且不早于上班后 9 小时 30 分";
     }
 
     private static int minutesOfDay(String value) {
@@ -315,8 +331,37 @@ final class ScheduleConfig {
                 isOvertimeDay(now) ? EVENING_OVERTIME_START_MINUTES : EVENING_ALLOWED_START_MINUTES,
                 minutesOfDay(morning) + MINIMUM_FIXED_GAP_MINUTES
         );
-        String time = randomTime(random, startMinutes, EVENING_END_MINUTES, Collections.<String>emptyList());
+        String time = randomTime(random, startMinutes, eveningEndMinutes(now), Collections.<String>emptyList());
         return formatDate(now) + " " + time;
+    }
+
+    private String existingValidTodayEvening(String completedMorning, Calendar now, String datePrefix) {
+        for (String dateTime : datedTimes) {
+            if (!dateTime.startsWith(datePrefix + " ")) {
+                continue;
+            }
+            String time = dateTime.substring(11);
+            if (isValidGeneratedTodayEvening(time, completedMorning, now)) {
+                return dateTime;
+            }
+        }
+        return "";
+    }
+
+    private static boolean isValidGeneratedTodayEvening(String time, String completedMorning, Calendar now) {
+        if (!isValidTime(time)) {
+            return false;
+        }
+        int minutes = minutesOfDay(time);
+        int startMinutes = Math.max(
+                isOvertimeDay(now) ? EVENING_OVERTIME_START_MINUTES : EVENING_ALLOWED_START_MINUTES,
+                minutesOfDay(completedMorning) + MINIMUM_FIXED_GAP_MINUTES
+        );
+        return minutes >= startMinutes && minutes <= eveningEndMinutes(now);
+    }
+
+    private static int eveningEndMinutes(Calendar now) {
+        return isOvertimeDay(now) ? EVENING_END_MINUTES : EVENING_NORMAL_END_MINUTES;
     }
 
     private static boolean isOvertimeDay(Calendar calendar) {
