@@ -2,7 +2,7 @@
 
 AutoOpenApp 是一个 Android 定时拉起工具，用于在指定时间自动打开目标应用或页面。当前默认目标为飞书，并针对灭屏、锁屏、后台启动限制和国产系统进程保活做了兼容处理。
 
-当前版本：`2.8 (versionCode 19)`
+当前版本：`2.8.0 (versionCode 19)`
 
 - 最低 Android 版本：Android 8.0（API 26）
 - 目标 Android 版本：Android 16（API 36）
