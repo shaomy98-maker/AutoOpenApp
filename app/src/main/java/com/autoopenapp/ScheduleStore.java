@@ -148,7 +148,14 @@ final class ScheduleStore {
         success.setTimeInMillis(successAt);
         if (success.get(Calendar.YEAR) != now.get(Calendar.YEAR)
                 || success.get(Calendar.DAY_OF_YEAR) != now.get(Calendar.DAY_OF_YEAR)) {
-            return config;
+            String latestMorningSuccess = LaunchTracker.latestMorningSuccessToday(context, now);
+            return latestMorningSuccess.isEmpty()
+                    ? config
+                    : config.withTodayEveningForCompletedMorningIfNeeded(
+                            latestMorningSuccess,
+                            now,
+                            new Random()
+                    );
         }
         return config.withTodayEveningForCompletedMorningIfNeeded(morning, now, new Random());
     }
