@@ -5,19 +5,21 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Collections;
+import java.util.Random;
 
 import org.junit.Test;
 
 public class ScheduleConfigTest {
     @Test
     public void allowedDailyWindows_includeOnlyConfiguredRanges() {
-        assertTrue(ScheduleConfig.isAllowedTriggerTime("08:00"));
+        assertTrue(ScheduleConfig.isAllowedTriggerTime("08:20"));
         assertTrue(ScheduleConfig.isAllowedTriggerTime("09:00"));
         assertTrue(ScheduleConfig.isAllowedTriggerTime("18:00"));
         assertTrue(ScheduleConfig.isAllowedTriggerTime("22:00"));
 
-        assertFalse(ScheduleConfig.isAllowedTriggerTime("07:59"));
+        assertFalse(ScheduleConfig.isAllowedTriggerTime("08:19"));
         assertFalse(ScheduleConfig.isAllowedTriggerTime("09:01"));
         assertFalse(ScheduleConfig.isAllowedTriggerTime("17:59"));
         assertFalse(ScheduleConfig.isAllowedTriggerTime("22:01"));
@@ -35,7 +37,7 @@ public class ScheduleConfigTest {
     }
 
     @Test
-    public void fixedRandomTimes_repairEveningToSafeClockOutWindow() {
+    public void fixedRandomTimes_dropLegacyDailyEveningTime() {
         ScheduleConfig config = new ScheduleConfig(
                 true,
                 ScheduleConfig.DEFAULT_PACKAGE_NAME,
@@ -48,10 +50,7 @@ public class ScheduleConfigTest {
 
         ScheduleConfig updated = config.withGeneratedFixedTimesIfNeeded();
 
-        assertEquals("08:50", updated.fixedTimes.get(0));
-        assertTrue(minutesOfDay(updated.fixedTimes.get(1)) >= minutesOfDay("21:30"));
-        assertTrue(minutesOfDay(updated.fixedTimes.get(1)) <= minutesOfDay("22:00"));
-        assertTrue(minutesOfDay(updated.fixedTimes.get(1)) - minutesOfDay(updated.fixedTimes.get(0)) >= 9 * 60 + 30);
+        assertEquals(Collections.singletonList("08:50"), updated.fixedTimes);
     }
 
     @Test
@@ -62,38 +61,98 @@ public class ScheduleConfigTest {
                 ScheduleConfig.DEFAULT_ACTIVITY_NAME,
                 "",
                 true,
-                Arrays.asList("08:43", "21:45"),
+                Collections.singletonList("08:43"),
                 Collections.<String>emptyList()
         );
 
         ScheduleConfig updated = config.withRegeneratedFixedTime("08:43");
 
-        assertEquals(Arrays.asList("08:43", "21:45"), updated.fixedTimes);
+        assertEquals(Collections.singletonList("08:43"), updated.fixedTimes);
     }
 
     @Test
-    public void fixedRandomTimes_regeneratePairAfterEveningSuccess() {
+    public void completedMorning_createsNormalWednesdayDatedEveningBeforeNineThirty() {
         ScheduleConfig config = new ScheduleConfig(
                 true,
                 ScheduleConfig.DEFAULT_PACKAGE_NAME,
                 ScheduleConfig.DEFAULT_ACTIVITY_NAME,
                 "",
                 true,
-                Arrays.asList("08:43", "21:45"),
+                Collections.singletonList("08:43"),
                 Collections.<String>emptyList()
         );
 
-        ScheduleConfig updated = config.withRegeneratedFixedTime("21:45");
+        ScheduleConfig updated = config.withRegeneratedFixedTime(
+                "08:43",
+                calendar(2026, Calendar.AUGUST, 19, 9, 0),
+                new Random(0)
+        );
 
-        assertEquals(2, updated.fixedTimes.size());
+        assertEquals(1, updated.datedTimes.size());
+        assertTrue(updated.datedTimes.get(0).startsWith("2026-08-19 "));
+        String time = updated.datedTimes.get(0).substring(11);
+        assertTrue(minutesOfDay(time) >= minutesOfDay("18:13"));
+        assertTrue(minutesOfDay(time) < minutesOfDay("21:30"));
+        assertTrue(minutesOfDay(time) <= minutesOfDay("22:00"));
+    }
+
+    @Test
+    public void completedMorning_createsOvertimeMondayDatedEveningAfterNineThirty() {
+        ScheduleConfig config = new ScheduleConfig(
+                true,
+                ScheduleConfig.DEFAULT_PACKAGE_NAME,
+                ScheduleConfig.DEFAULT_ACTIVITY_NAME,
+                "",
+                true,
+                Collections.singletonList("08:43"),
+                Collections.<String>emptyList()
+        );
+
+        ScheduleConfig updated = config.withRegeneratedFixedTime(
+                "08:43",
+                calendar(2026, Calendar.AUGUST, 17, 9, 0),
+                new Random(0)
+        );
+
+        assertEquals(1, updated.datedTimes.size());
+        String time = updated.datedTimes.get(0).substring(11);
+        assertTrue(minutesOfDay(time) >= minutesOfDay("21:30"));
+        assertTrue(minutesOfDay(time) <= minutesOfDay("22:00"));
+    }
+
+    @Test
+    public void completedDatedEvening_regeneratesOnlyNextMorning() {
+        ScheduleConfig config = new ScheduleConfig(
+                true,
+                ScheduleConfig.DEFAULT_PACKAGE_NAME,
+                ScheduleConfig.DEFAULT_ACTIVITY_NAME,
+                "",
+                true,
+                Collections.singletonList("08:43"),
+                Collections.<String>emptyList(),
+                Collections.singletonList("2026-08-19 18:30")
+        );
+
+        ScheduleConfig updated = config.withRegeneratedFixedTime(
+                "2026-08-19 18:30",
+                calendar(2026, Calendar.AUGUST, 19, 19, 0),
+                new Random(0)
+        );
+
+        assertTrue(updated.datedTimes.isEmpty());
+        assertEquals(1, updated.fixedTimes.size());
         assertTrue(minutesOfDay(updated.fixedTimes.get(0)) >= minutesOfDay("08:30"));
         assertTrue(minutesOfDay(updated.fixedTimes.get(0)) <= minutesOfDay("08:50"));
-        assertTrue(minutesOfDay(updated.fixedTimes.get(1)) >= minutesOfDay("21:30"));
-        assertTrue(minutesOfDay(updated.fixedTimes.get(1)) <= minutesOfDay("22:00"));
-        assertTrue(minutesOfDay(updated.fixedTimes.get(1)) - minutesOfDay(updated.fixedTimes.get(0)) >= 9 * 60 + 30);
     }
 
     private static int minutesOfDay(String value) {
         return Integer.parseInt(value.substring(0, 2)) * 60 + Integer.parseInt(value.substring(3, 5));
+    }
+
+    private static Calendar calendar(int year, int month, int day, int hour, int minute) {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(year, month, day, hour, minute, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        return calendar;
     }
 }

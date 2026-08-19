@@ -6,7 +6,9 @@ import android.content.SharedPreferences;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.Calendar;
 import java.util.Collections;
+import java.util.Random;
 
 final class ScheduleStore {
     private static final String PREFS = "auto_open_prefs";
@@ -35,7 +37,10 @@ final class ScheduleStore {
             // ScheduleConfig.fromJson historically falls back to enabled defaults on a parse
             // error. Validate first so a damaged non-empty preference fails closed instead.
             new JSONObject(raw);
-            ScheduleConfig config = ScheduleConfig.fromJson(raw).withGeneratedFixedTimesIfNeeded();
+            ScheduleConfig config = migrateTodayEveningIfNeeded(
+                    context,
+                    ScheduleConfig.fromJson(raw).withGeneratedFixedTimesIfNeeded()
+            );
             String normalized = config.toJson();
             if (!normalized.equals(raw)) {
                 save(context, config);
@@ -87,8 +92,8 @@ final class ScheduleStore {
      */
     static synchronized boolean completeAfterSuccess(Context context, String completedTime) {
         ScheduleConfig current = load(context);
-        ScheduleConfig updated = current.withoutDatedTime(completedTime)
-                .withRegeneratedFixedTime(completedTime);
+        ScheduleConfig updated = current.withRegeneratedFixedTime(completedTime)
+                .withoutDatedTime(completedTime);
         boolean changed = !updated.datedTimes.equals(current.datedTimes)
                 || !updated.fixedTimes.equals(current.fixedTimes);
         if (!changed) {
@@ -120,5 +125,31 @@ final class ScheduleStore {
         save(context, safe);
         RunLog.e(context, "排程配置损坏，已关闭自动任务并写入安全配置", cause);
         return safe;
+    }
+
+    private static ScheduleConfig migrateTodayEveningIfNeeded(Context context, ScheduleConfig config) {
+        if (config.fixedTimes.isEmpty()) {
+            return config;
+        }
+        String morning = config.fixedTimes.get(0);
+        long successAt = LaunchTracker.successAt(context, morning);
+        Calendar now = Calendar.getInstance();
+        if (successAt <= 0L) {
+            String latestMorningSuccess = LaunchTracker.latestMorningSuccessToday(context, now);
+            return latestMorningSuccess.isEmpty()
+                    ? config
+                    : config.withTodayEveningForCompletedMorningIfNeeded(
+                            latestMorningSuccess,
+                            now,
+                            new Random()
+                    );
+        }
+        Calendar success = Calendar.getInstance();
+        success.setTimeInMillis(successAt);
+        if (success.get(Calendar.YEAR) != now.get(Calendar.YEAR)
+                || success.get(Calendar.DAY_OF_YEAR) != now.get(Calendar.DAY_OF_YEAR)) {
+            return config;
+        }
+        return config.withTodayEveningForCompletedMorningIfNeeded(morning, now, new Random());
     }
 }

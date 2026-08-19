@@ -7,6 +7,7 @@ import org.json.JSONObject;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collections;
 import java.util.Date;
 import java.util.LinkedHashSet;
@@ -19,9 +20,11 @@ final class ScheduleConfig {
     static final String DEFAULT_PACKAGE_NAME = "com.ss.android.lark";
     static final String DEFAULT_ACTIVITY_NAME = ".main.app.MainActivity";
     private static final int MINIMUM_FIXED_GAP_MINUTES = 9 * 60 + 30;
+    private static final int MORNING_ALLOWED_START_MINUTES = 8 * 60 + 20;
     private static final int MORNING_START_MINUTES = 8 * 60 + 30;
     private static final int MORNING_END_MINUTES = 8 * 60 + 50;
-    private static final int EVENING_START_MINUTES = 21 * 60 + 30;
+    private static final int EVENING_ALLOWED_START_MINUTES = 18 * 60;
+    private static final int EVENING_OVERTIME_START_MINUTES = 21 * 60 + 30;
     private static final int EVENING_END_MINUTES = 22 * 60;
 
     final boolean enabled;
@@ -77,12 +80,7 @@ final class ScheduleConfig {
         if (isEmpty(morning)) {
             morning = randomMorningTime(random, Collections.<String>emptyList());
         }
-
-        String evening = firstFixedTimeInRange(fixedTimes, EVENING_START_MINUTES, EVENING_END_MINUTES);
-        if (isEmpty(evening) || !hasRequiredFixedGap(morning, evening)) {
-            evening = randomEveningTime(random, morning, Collections.singletonList(morning));
-        }
-        ArrayList<String> generated = fixedPair(morning, evening);
+        ArrayList<String> generated = singleFixedMorning(morning);
         if (generated.equals(fixedTimes)) {
             return this;
         }
@@ -90,25 +88,50 @@ final class ScheduleConfig {
     }
 
     ScheduleConfig withRegeneratedFixedTime(String completedTime) {
+        return withRegeneratedFixedTime(completedTime, Calendar.getInstance(), new Random());
+    }
+
+    ScheduleConfig withRegeneratedFixedTime(String completedTime, Calendar now, Random random) {
         if (isEmpty(completedTime) || !fixedTimes.contains(completedTime)) {
+            if (isValidDateTime(completedTime) && datedTimes.contains(completedTime)) {
+                ArrayList<String> nextDatedTimes = new ArrayList<>(datedTimes);
+                nextDatedTimes.remove(completedTime);
+                return new ScheduleConfig(
+                        enabled,
+                        packageName,
+                        activityName,
+                        deepLink,
+                        workdaysOnly,
+                        singleFixedMorning(randomMorningTime(random, Collections.<String>emptyList())),
+                        times,
+                        nextDatedTimes
+                );
+            }
             return this;
         }
-        Random random = new Random();
         if (isMorningFixedTime(completedTime)) {
-            return this;
-        } else if (isEveningFixedTime(completedTime)) {
-            return new ScheduleConfig(
-                    enabled,
-                    packageName,
-                    activityName,
-                    deepLink,
-                    workdaysOnly,
-                    randomFixedPair(random),
-                    times,
-                    datedTimes
-            );
+            return withTodayEveningForCompletedMorningIfNeeded(completedTime, now, random);
         }
         return this;
+    }
+
+    ScheduleConfig withTodayEveningForCompletedMorningIfNeeded(String completedMorning, Calendar now, Random random) {
+        if (!isMorningFixedTime(completedMorning)) {
+            return this;
+        }
+        String datePrefix = formatDate(now);
+        ArrayList<String> nextDatedTimes = new ArrayList<>();
+        for (String dateTime : datedTimes) {
+            if (!dateTime.startsWith(datePrefix + " ")) {
+                nextDatedTimes.add(dateTime);
+            }
+        }
+        String evening = randomTodayEveningDateTime(random, completedMorning, now);
+        if (!nextDatedTimes.contains(evening)) {
+            nextDatedTimes.add(evening);
+        }
+        Collections.sort(nextDatedTimes);
+        return new ScheduleConfig(enabled, packageName, activityName, deepLink, workdaysOnly, fixedTimes, times, nextDatedTimes);
     }
 
     ScheduleConfig withoutDatedTime(String completedTime) {
@@ -231,16 +254,16 @@ final class ScheduleConfig {
             return false;
         }
         int minutes = minutesOfDay(value);
-        return (minutes >= minutesOfDay("08:00") && minutes <= minutesOfDay("09:00"))
-                || (minutes >= minutesOfDay("18:00") && minutes <= minutesOfDay("22:00"));
+        return (minutes >= MORNING_ALLOWED_START_MINUTES && minutes <= minutesOfDay("09:00"))
+                || (minutes >= EVENING_ALLOWED_START_MINUTES && minutes <= EVENING_END_MINUTES);
     }
 
     static String allowedTimeDescription() {
-        return "仅允许 08:00-09:00、18:00-22:00";
+        return "仅允许 08:20-09:00、18:00-22:00";
     }
 
     static String fixedTimeDescription() {
-        return "固定随机：08:30-08:50、21:30-22:00，下班不早于上班后 9 小时 30 分";
+        return "固定随机：早上 08:30-08:50；下班按当天生成，一二四 21:30-22:00，三五不早于上班后 9 小时 30 分";
     }
 
     private static int minutesOfDay(String value) {
@@ -287,22 +310,34 @@ final class ScheduleConfig {
         return randomTime(random, MORNING_START_MINUTES, MORNING_END_MINUTES, existing);
     }
 
-    private static String randomEveningTime(Random random, String morning, List<String> existing) {
-        int startMinutes = Math.max(EVENING_START_MINUTES, minutesOfDay(morning) + MINIMUM_FIXED_GAP_MINUTES);
-        return randomTime(random, startMinutes, EVENING_END_MINUTES, existing);
+    private static String randomTodayEveningDateTime(Random random, String morning, Calendar now) {
+        int startMinutes = Math.max(
+                isOvertimeDay(now) ? EVENING_OVERTIME_START_MINUTES : EVENING_ALLOWED_START_MINUTES,
+                minutesOfDay(morning) + MINIMUM_FIXED_GAP_MINUTES
+        );
+        String time = randomTime(random, startMinutes, EVENING_END_MINUTES, Collections.<String>emptyList());
+        return formatDate(now) + " " + time;
     }
 
-    private static ArrayList<String> randomFixedPair(Random random) {
-        String morning = randomMorningTime(random, Collections.<String>emptyList());
-        String evening = randomEveningTime(random, morning, Collections.singletonList(morning));
-        return fixedPair(morning, evening);
+    private static boolean isOvertimeDay(Calendar calendar) {
+        int day = calendar.get(Calendar.DAY_OF_WEEK);
+        return day == Calendar.MONDAY || day == Calendar.TUESDAY || day == Calendar.THURSDAY;
     }
 
-    private static ArrayList<String> fixedPair(String morning, String evening) {
-        ArrayList<String> pair = new ArrayList<>();
-        pair.add(morning);
-        pair.add(evening);
-        return pair;
+    private static ArrayList<String> singleFixedMorning(String morning) {
+        ArrayList<String> values = new ArrayList<>();
+        values.add(morning);
+        return values;
+    }
+
+    private static String formatDate(Calendar calendar) {
+        return String.format(
+                Locale.US,
+                "%04d-%02d-%02d",
+                calendar.get(Calendar.YEAR),
+                calendar.get(Calendar.MONTH) + 1,
+                calendar.get(Calendar.DAY_OF_MONTH)
+        );
     }
 
     private static String randomTime(Random random, int startMinutes, int endMinutes, List<String> existing) {
@@ -342,13 +377,7 @@ final class ScheduleConfig {
             return false;
         }
         int minutes = minutesOfDay(value);
-        return minutes >= EVENING_START_MINUTES && minutes <= EVENING_END_MINUTES;
-    }
-
-    private static boolean hasRequiredFixedGap(String morning, String evening) {
-        return isValidTime(morning)
-                && isValidTime(evening)
-                && minutesOfDay(evening) - minutesOfDay(morning) >= MINIMUM_FIXED_GAP_MINUTES;
+        return minutes >= EVENING_ALLOWED_START_MINUTES && minutes <= EVENING_END_MINUTES;
     }
 
     private static String formatMinutes(int minutes) {

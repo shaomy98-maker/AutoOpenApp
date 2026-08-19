@@ -13,6 +13,8 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.text.TextUtils;
@@ -30,6 +32,7 @@ final class TargetLauncher {
     private static final String MANUAL_NOTIFICATION_TAG = "manual_launch";
     private static final Object LAUNCH_LOCK = new Object();
     private static final long DISPATCH_DEDUP_WINDOW_MILLIS = 5_000L;
+    private static final long RETURN_HOME_DELAY_MILLIS = 15_000L;
     private static final Map<String, Long> RECENT_DISPATCHES = new HashMap<>();
 
     private TargetLauncher() {
@@ -264,10 +267,26 @@ final class TargetLauncher {
         AlarmScheduler.cancelRetry(context, alarmValue);
         boolean changed = ScheduleStore.completeAfterSuccess(context, alarmValue);
         cancelReminder(context, alarmValue);
+        scheduleReturnHome(context, alarmValue);
         if (changed) {
             RunLog.i(context, "成功后任务配置已更新，重新排程 value=" + alarmValue);
             AlarmScheduler.reschedule(context);
         }
+    }
+
+    private static void scheduleReturnHome(Context context, String alarmValue) {
+        Context appContext = context.getApplicationContext();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                Intent home = new Intent(Intent.ACTION_MAIN);
+                home.addCategory(Intent.CATEGORY_HOME);
+                home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                appContext.startActivity(home);
+                RunLog.i(appContext, "目标打开成功后已延迟回到桌面 value=" + alarmValue);
+            } catch (Exception e) {
+                RunLog.e(appContext, "目标打开成功后回到桌面失败 value=" + alarmValue, e);
+            }
+        }, RETURN_HOME_DELAY_MILLIS);
     }
 
     private static boolean wasRecentlyDispatched(String alarmValue) {

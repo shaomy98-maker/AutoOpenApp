@@ -888,11 +888,11 @@ public class MainActivity extends android.app.Activity {
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(14), dp(14), dp(14), dp(14));
             row.setBackground(rounded(0xFFEFF6FF, 0xFFBFDBFE, 28));
-            TextView dot = taskDot(isMorning(time) ? "早" : "晚", 0xFFDBEAFE, 0xFF1D4ED8);
+            TextView dot = taskDot("早", 0xFFDBEAFE, 0xFF1D4ED8);
             row.addView(dot, new LinearLayout.LayoutParams(dp(48), dp(48)));
             TextView value = new TextView(this);
-            value.setText((isMorning(time) ? "早间随机 08:30-08:50" : "晚间随机 21:30-22:00")
-                    + " · 下班完成后换下一组\n" + time);
+            value.setText("早间自动 08:30-08:50\n"
+                    + time + " · 下班按当天生成：一二四 21:30 后，三五按 9.5 小时后");
             textDp(value, 17);
             value.setTypeface(Typeface.DEFAULT_BOLD);
             value.setTextColor(0xFF2542BD);
@@ -900,7 +900,7 @@ public class MainActivity extends android.app.Activity {
             valueParams.leftMargin = dp(12);
             row.addView(value, valueParams);
             TextView randomStatus = new TextView(this);
-            randomStatus.setText("配对");
+            randomStatus.setText("自动");
             textDp(randomStatus, 12);
             randomStatus.setTypeface(Typeface.DEFAULT_BOLD);
             randomStatus.setTextColor(0xFF2563EB);

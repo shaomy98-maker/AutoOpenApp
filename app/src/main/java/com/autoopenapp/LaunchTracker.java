@@ -3,6 +3,9 @@ package com.autoopenapp;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import java.util.Calendar;
+import java.util.Map;
+
 final class LaunchTracker {
     private static final String PREFS = "auto_open_launch";
     private static final String KEY_SUCCESS_AT_PREFIX = "success_at_v2:";
@@ -40,6 +43,32 @@ final class LaunchTracker {
         return at > 0L && delta >= 0L && delta <= SUCCESS_WINDOW_MILLIS;
     }
 
+    static long successAt(Context context, String alarmValue) {
+        return prefs(context).getLong(KEY_SUCCESS_AT_PREFIX + scope(alarmValue), 0L);
+    }
+
+    static String latestMorningSuccessToday(Context context, Calendar today) {
+        String latestValue = "";
+        long latestAt = 0L;
+        for (Map.Entry<String, ?> entry : prefs(context).getAll().entrySet()) {
+            if (!entry.getKey().startsWith(KEY_SUCCESS_AT_PREFIX)
+                    || !(entry.getValue() instanceof Long)) {
+                continue;
+            }
+            String value = alarmValueFromSuccessKey(entry.getKey());
+            if (!ScheduleConfig.isValidTime(value)
+                    || Integer.parseInt(value.substring(0, 2)) >= 12) {
+                continue;
+            }
+            long at = (Long) entry.getValue();
+            if (isSameDay(at, today) && at > latestAt) {
+                latestAt = at;
+                latestValue = value;
+            }
+        }
+        return latestValue;
+    }
+
     static boolean targetObservedAfterDispatch(
             Context context,
             String alarmValue,
@@ -66,6 +95,19 @@ final class LaunchTracker {
         String value = alarmValue == null ? "" : alarmValue;
         // Length makes the boundary explicit and SharedPreferences keys safely accept the value.
         return value.length() + ":" + value;
+    }
+
+    private static String alarmValueFromSuccessKey(String key) {
+        String scoped = key.substring(KEY_SUCCESS_AT_PREFIX.length());
+        int colon = scoped.indexOf(':');
+        return colon < 0 ? "" : scoped.substring(colon + 1);
+    }
+
+    private static boolean isSameDay(long millis, Calendar day) {
+        Calendar calendar = Calendar.getInstance();
+        calendar.setTimeInMillis(millis);
+        return calendar.get(Calendar.YEAR) == day.get(Calendar.YEAR)
+                && calendar.get(Calendar.DAY_OF_YEAR) == day.get(Calendar.DAY_OF_YEAR);
     }
 
     private static SharedPreferences prefs(Context context) {
